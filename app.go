@@ -93,7 +93,9 @@ func (a *App) SetReadPlan(path string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func(f *os.File) {
+		_ = f.Close()
+	}(f)
 
 	a.readPlan, err = emulator.NewReadPlan(f)
 	if err != nil {
@@ -101,7 +103,7 @@ func (a *App) SetReadPlan(path string) error {
 	}
 
 	luaFile := filepath.Join(path, "factbuilder.lua")
-	err = a.processingEngine.LoadFile(luaFile)
+	err = a.processingEngine.LoadFile(luaFile, a.readPlan)
 	if err != nil {
 		return err
 	}
@@ -193,7 +195,7 @@ func (a *App) StartEmulatorClient() error {
 			connectionStatus.Message = "Emulator connected"
 			runtime.EventsEmit(a.ctx, "emulator:connection", connectionStatus)
 
-			err = a.processingEngine.ProcessValues(a.readPlan, values)
+			err = a.processingEngine.ProcessValues(values)
 			if err != nil {
 				fmt.Println(err)
 				continue

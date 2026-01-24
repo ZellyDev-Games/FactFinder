@@ -31,43 +31,18 @@ const (
 	HELLO
 )
 
-type Signals uint32
-
-const (
-	delta Signals = 1 << iota
-	rising
-	falling
-	edge
-)
-
-func (s *Signals) Has(signal Signals) bool {
-	return *s&signal != 0
-}
-
-func (s *Signals) Set(signal Signals) {
-	*s |= signal
-}
-
 type Engine struct {
 	L                    *lua.LState
 	m                    sync.Mutex
 	values               map[string]emulator.Value
-	signals              map[string]Signals
-	deltaSigned          *lua.LFunction
-	deltaUnsigned        *lua.LFunction
-	risingSigned         *lua.LFunction
-	fallingSigned        *lua.LFunction
-	risingUnsigned       *lua.LFunction
-	fallingUnsigned      *lua.LFunction
-	edge                 *lua.LFunction
 	conn                 net.PacketConn
 	osAddr               *net.UDPAddr
 	openSplitConnected   bool
 	opensplitConnectedCh chan bool
+	tickFunc             *lua.LFunction
 }
 
 func NewEngine() (*Engine, chan bool) {
-	L := lua.NewState()
 	conn, err := net.ListenPacket("udp", ":0")
 	if err != nil {
 		panic(err)
@@ -79,12 +54,51 @@ func NewEngine() (*Engine, chan bool) {
 	}
 
 	e := &Engine{
-		L:                    L,
+		m:                    sync.Mutex{},
 		values:               make(map[string]emulator.Value),
-		signals:              make(map[string]Signals),
 		conn:                 conn,
 		osAddr:               addr,
 		opensplitConnectedCh: make(chan bool),
+	}
+
+	go func() {
+		ticker := time.NewTicker(1000 * time.Millisecond)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			e.openSplitConnected = e.Hello()
+			e.updateConnectionStatus(e.openSplitConnected)
+		}
+	}()
+
+	return e, e.opensplitConnectedCh
+}
+
+func (e *Engine) Close() {
+	if e.L != nil {
+		e.L.Close()
+	}
+	e.updateConnectionStatus(false)
+	e.conn.Close()
+	e.conn = nil
+}
+
+func (e *Engine) OpenSplitConnected() bool {
+	return e.openSplitConnected
+}
+
+func (e *Engine) LoadFile(path string, plan *emulator.ReadPlan) error {
+	L := lua.NewState()
+	e.L = L
+
+	for _, spec := range plan.Watches {
+		if spec.Type == emulator.Bool {
+			e.L.SetGlobal(spec.Name, lua.LBool(false))
+			e.L.SetGlobal(spec.Name+"_last", lua.LBool(false))
+		} else {
+			e.L.SetGlobal(spec.Name, lua.LNumber(0))
+			e.L.SetGlobal(spec.Name+"_last", lua.LNumber(0))
+		}
 	}
 
 	e.L.SetGlobal("split", e.L.NewFunction(func(L *lua.LState) int {
@@ -135,240 +149,53 @@ func NewEngine() (*Engine, chan bool) {
 		return 0
 	}))
 
-	go func() {
-		ticker := time.NewTicker(1000 * time.Millisecond)
-		defer ticker.Stop()
-
-		for range ticker.C {
-			e.openSplitConnected = e.Hello()
-			e.updateConnectionStatus(e.openSplitConnected)
-		}
-	}()
-
-	return e, e.opensplitConnectedCh
-}
-
-func (e *Engine) Close() {
-	if e.L != nil {
-		e.L.Close()
-	}
-	e.updateConnectionStatus(false)
-	e.conn.Close()
-	e.conn = nil
-}
-
-func (e *Engine) OpenSplitConnected() bool {
-	return e.openSplitConnected
-}
-
-func (e *Engine) LoadFile(path string) error {
 	if err := e.L.DoFile(path); err != nil {
 		return err
 	}
-	e.cacheCallbacks()
+
+	fn := e.L.GetGlobal("onTick")
+	if fn.Type() != lua.LTFunction {
+		fmt.Println("onTick not present in factfinder.lua")
+	} else {
+		e.tickFunc = fn.(*lua.LFunction)
+	}
+
 	return nil
 }
 
-func (e *Engine) ProcessValues(readplan *emulator.ReadPlan, values []emulator.Value) error {
+func (e *Engine) ProcessValues(values []emulator.Value) error {
 	for _, newValue := range values {
-		if _, ok := e.values[newValue.Name]; !ok {
-			// first time we've seen this value, get the value and the requested signals
-			e.values[newValue.Name] = newValue
-			signals := Signals(0)
-			for _, w := range readplan.Watches {
-				if w.Name == newValue.Name {
-					for _, s := range w.Signals {
-						if s == emulator.Rising {
-							signals.Set(rising)
-							continue
-						}
+		name := newValue.Name
+		t := newValue.Type
 
-						if s == emulator.Falling {
-							signals.Set(falling)
-							continue
-						}
-
-						if s == emulator.Delta {
-							signals.Set(delta)
-							continue
-						}
-
-						if s == emulator.Edge {
-							signals.Set(edge)
-							continue
-						}
-					}
-
-					e.signals[newValue.Name] = signals
-					break
-				}
-			}
-			nvString := ""
-			switch newValue.Type {
-			case emulator.U8, emulator.U16, emulator.U32, emulator.U64:
-				nvString = fmt.Sprintf("%d", newValue.Unsigned)
-			case emulator.I8, emulator.I16, emulator.I32, emulator.I64:
-				nvString = fmt.Sprintf("%d", newValue.Signed)
-			case emulator.Bool:
-				nvString = fmt.Sprintf("%t", newValue.Bool)
-			}
-			fmt.Printf("New Value: %s - %v\n", newValue.Name, nvString)
+		// First time we've seen this value, do no processing on it yet.
+		if _, ok := e.values[name]; !ok {
+			e.values[name] = newValue
 			continue
 		}
 
-		name := newValue.Name
-		old := e.values[name]
-		signals := e.signals[name]
-
-		switch old.Type {
-		case emulator.I8, emulator.I16, emulator.I32, emulator.I64:
-			if old.Signed == newValue.Signed {
-				// no change early exit
-				continue
-			}
-
-			if signals.Has(delta) {
-				fmt.Printf("delta: %s - %d -> %d\n", newValue.Name, old.Signed, newValue.Signed)
-				e.DeltaSigned(name, old.Signed, newValue.Signed)
-			}
-
-			if signals.Has(rising) && newValue.Signed > old.Signed {
-				fmt.Printf("rising: %s - %d -> %d\n", newValue.Name, old.Signed, newValue.Signed)
-				e.RisingSigned(name, old.Signed, newValue.Signed)
-			} else if signals.Has(falling) && newValue.Signed < old.Signed {
-				fmt.Printf("falling: %s - %d -> %d\n", newValue.Name, old.Signed, newValue.Signed)
-				e.FallingSigned(name, old.Signed, newValue.Signed)
-			}
-
-		case emulator.U8, emulator.U16, emulator.U32, emulator.U64:
-			if old.Unsigned == newValue.Unsigned {
-				// no change early exit
-				continue
-			}
-
-			if signals.Has(delta) {
-				fmt.Printf("delta: %s - %d -> %d\n", newValue.Name, old.Unsigned, newValue.Unsigned)
-				e.DeltaUnsigned(name, old.Unsigned, newValue.Unsigned)
-			}
-
-			if signals.Has(rising) && newValue.Unsigned > old.Unsigned {
-				fmt.Printf("rising: %s - %d -> %d\n", newValue.Name, old.Unsigned, newValue.Unsigned)
-				e.RisingUnsigned(name, old.Unsigned, newValue.Unsigned)
-			} else if signals.Has(falling) && newValue.Unsigned < old.Unsigned {
-				fmt.Printf("falling: %s - %d -> %d\n", newValue.Name, old.Unsigned, newValue.Unsigned)
-				e.FallingUnsigned(name, old.Unsigned, newValue.Unsigned)
-			}
-
+		switch t {
 		case emulator.Bool:
-			if signals.Has(edge) && newValue.Bool != old.Bool {
-				fmt.Printf("edge: %s - %t -> %t\n", newValue.Name, old.Bool, newValue.Bool)
-				e.Edge(name, newValue.Bool)
-			}
+			e.L.SetGlobal(name+"_last", lua.LBool(e.values[name].Bool))
+			e.L.SetGlobal(name, lua.LBool(newValue.Bool))
+		case emulator.U8, emulator.U16, emulator.U32, emulator.U64:
+			e.L.SetGlobal(name+"_last", lua.LNumber(e.values[name].Unsigned))
+			e.L.SetGlobal(name, lua.LNumber(newValue.Unsigned))
+		default:
+			e.L.SetGlobal(name+"_last", lua.LNumber(e.values[name].Signed))
+			e.L.SetGlobal(name, lua.LNumber(newValue.Signed))
 		}
+
 		e.values[name] = newValue
 	}
 
-	return nil
-}
-
-func (e *Engine) DeltaSigned(id string, old, new int64) {
-	if e.deltaSigned == nil {
-		return
-	}
-
-	_ = e.L.CallByParam(lua.P{
-		Fn:      e.deltaSigned,
+	err := e.L.CallByParam(lua.P{
+		Fn:      e.tickFunc,
 		NRet:    0,
 		Protect: true,
-	}, lua.LString(id), lua.LNumber(old), lua.LNumber(new))
-}
-
-func (e *Engine) DeltaUnsigned(id string, old, new uint64) {
-	if e.deltaUnsigned == nil {
-		return
-	}
-
-	_ = e.L.CallByParam(lua.P{
-		Fn:   e.deltaUnsigned,
-		NRet: 0,
-	}, lua.LString(id), lua.LNumber(old), lua.LNumber(new))
-}
-
-func (e *Engine) RisingSigned(id string, old, new int64) {
-	if e.risingSigned == nil {
-		return
-	}
-	_ = e.L.CallByParam(lua.P{
-		Fn:      e.risingSigned,
-		NRet:    0,
-		Protect: true,
-	}, lua.LString(id), lua.LNumber(old), lua.LNumber(new))
-}
-
-func (e *Engine) FallingSigned(id string, old, new int64) {
-	if e.fallingSigned == nil {
-		return
-	}
-	_ = e.L.CallByParam(lua.P{
-		Fn:      e.fallingSigned,
-		NRet:    0,
-		Protect: true,
-	}, lua.LString(id), lua.LNumber(old), lua.LNumber(new))
-}
-
-func (e *Engine) RisingUnsigned(id string, old, new uint64) {
-	if e.risingUnsigned == nil {
-		return
-	}
-	_ = e.L.CallByParam(lua.P{
-		Fn:      e.risingUnsigned,
-		NRet:    0,
-		Protect: true,
-	}, lua.LString(id), lua.LNumber(old), lua.LNumber(new))
-}
-
-func (e *Engine) FallingUnsigned(id string, old, new uint64) {
-	if e.fallingUnsigned == nil {
-		return
-	}
-	_ = e.L.CallByParam(lua.P{
-		Fn:      e.fallingUnsigned,
-		NRet:    0,
-		Protect: true,
-	}, lua.LString(id), lua.LNumber(old), lua.LNumber(new))
-}
-
-func (e *Engine) Edge(id string, new bool) {
-	if e.edge == nil {
-		return
-	}
-	var b lua.LValue = lua.LFalse
-	if new {
-		b = lua.LTrue
-	}
-	_ = e.L.CallByParam(lua.P{
-		Fn:      e.edge,
-		NRet:    0,
-		Protect: true,
-	}, lua.LString(id), b)
-}
-
-func (e *Engine) cacheCallbacks() {
-	e.risingSigned = asFunc(e.L.GetGlobal("risingSigned"))
-	e.fallingSigned = asFunc(e.L.GetGlobal("fallingSigned"))
-	e.risingUnsigned = asFunc(e.L.GetGlobal("risingUnsigned"))
-	e.fallingUnsigned = asFunc(e.L.GetGlobal("fallingUnsigned"))
-	e.edge = asFunc(e.L.GetGlobal("edge"))
-	e.deltaSigned = asFunc(e.L.GetGlobal("deltaSigned"))
-	e.deltaUnsigned = asFunc(e.L.GetGlobal("deltaUnsigned"))
-}
-
-func asFunc(v lua.LValue) *lua.LFunction {
-	if v == lua.LNil {
-		return nil
-	}
-	if f, ok := v.(*lua.LFunction); ok {
-		return f
+	})
+	if err != nil {
+		return err
 	}
 	return nil
 }
