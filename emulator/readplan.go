@@ -45,14 +45,19 @@ const (
 )
 
 type ReadSpec struct {
-	Name    string    `yaml:"name"`
-	Address HexInt    `yaml:"address"`
-	Type    ValueType `yaml:"type"`
-	Bank    Bank      `yaml:"bank"`
-	Signals []Signal  `yaml:"signals"`
+	Name         string    `yaml:"name"`
+	Address      HexInt    `yaml:"address"`
+	Type         ValueType `yaml:"type"`
+	Bank         Bank      `yaml:"bank,omitempty"`
+	SizeOverride int       `yaml:"size,omitempty"`
+	Mask         HexInt    `yaml:"mask,omitempty"`
 }
 
 func (r ReadSpec) Size() int {
+	if r.SizeOverride > 0 {
+		return r.SizeOverride
+	}
+
 	switch r.Type {
 	case I8, U8, Bool:
 		return 1
@@ -85,6 +90,12 @@ func NewReadPlan(reader io.Reader) (*ReadPlan, error) {
 	err = yaml.Unmarshal(rawYaml, &rp)
 	if err != nil {
 		return nil, err
+	}
+
+	for _, watch := range rp.Watches {
+		if watch.Bank == "" {
+			watch.Bank = WRAM
+		}
 	}
 
 	return &rp, nil

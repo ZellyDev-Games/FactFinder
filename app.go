@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -26,6 +27,8 @@ type App struct {
 	readPlan         *emulator.ReadPlan
 	memoryReader     emulator.MemoryReader
 	processingEngine *processing.Engine
+	state            [][]string
+	values           []emulator.Value
 	osConnectionCh   chan bool
 }
 
@@ -109,6 +112,34 @@ func (a *App) SetReadPlan(path string) error {
 	}
 
 	return nil
+}
+
+func (a *App) sendState() {
+	runtime.EventsEmit(a.ctx, "emulator:state", a.state)
+}
+
+func (a *App) sendValues() {
+	out := make([][]string, len(a.values))
+	for i, v := range a.values {
+		stringKey := v.Name
+		stringVal := ""
+		switch v.Type {
+		case emulator.U8, emulator.U16, emulator.U32, emulator.U64:
+			stringVal = strconv.FormatUint(v.Unsigned, 16)
+		case emulator.I8, emulator.I16, emulator.I32, emulator.I64:
+			stringVal = strconv.FormatUint(v.Unsigned, 16)
+		case emulator.Bool:
+			stringVal = strconv.FormatBool(v.Bool)
+		case emulator.FlagCount:
+			stringVal = strconv.FormatInt(int64(v.FlagCount), 10)
+		}
+		out[i] = []string{
+			stringKey,
+			stringVal,
+		}
+	}
+
+	runtime.EventsEmit(a.ctx, "emulator:values", out)
 }
 
 func (a *App) StartEmulatorClient() error {
@@ -201,6 +232,10 @@ func (a *App) StartEmulatorClient() error {
 				continue
 			}
 
+			a.state = a.processingEngine.GetState()
+			a.values = values
+			a.sendState()
+			a.sendValues()
 		}
 	}()
 

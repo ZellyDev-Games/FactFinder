@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math/bits"
 	"net"
 	"strconv"
 	"sync"
@@ -115,7 +116,11 @@ func (c *Client) GetValues(readplan *emulator.ReadPlan) ([]emulator.Value, error
 			}
 		}
 
-		msg := c.buildReadCoreMemoryCmd(address, spec.Size())
+		size := spec.SizeOverride
+		if size == 0 {
+			size = spec.Size()
+		}
+		msg := c.buildReadCoreMemoryCmd(address, size)
 		c.m.Lock()
 		if _, err := c.conn.Write(msg); err != nil {
 			c.m.Unlock()
@@ -177,11 +182,17 @@ func (c *Client) GetValues(readplan *emulator.ReadPlan) ([]emulator.Value, error
 			val.Unsigned = u
 		case emulator.Bool:
 			val.Bool = u != 0
+		case emulator.FlagCount:
+			if spec.Mask != 0 {
+				u = u & 0x3FFF
+			}
+			val.FlagCount = bits.OnesCount64(u)
 		}
 
 		vals = append(vals, val)
 	}
 
+	fmt.Println(vals)
 	return vals, nil
 }
 

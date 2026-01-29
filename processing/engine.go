@@ -4,6 +4,7 @@ import (
 	"FactFinder/emulator"
 	"fmt"
 	"net"
+	"sort"
 	"sync"
 	"time"
 
@@ -163,6 +164,25 @@ func (e *Engine) LoadFile(path string, plan *emulator.ReadPlan) error {
 	return nil
 }
 
+func (e *Engine) GetState() [][]string {
+	out := make([][]string, 0)
+
+	tbl, ok := e.L.GetGlobal("state").(*lua.LTable)
+	if !ok {
+		return out
+	}
+
+	tbl.ForEach(func(k, v lua.LValue) {
+		out = append(out, []string{k.String(), v.String()})
+	})
+
+	sort.Slice(out, func(i, j int) bool {
+		return out[i][0] < out[j][0] // sort by key
+	})
+
+	return out
+}
+
 func (e *Engine) ProcessValues(values []emulator.Value) error {
 	for _, newValue := range values {
 		name := newValue.Name
@@ -175,6 +195,9 @@ func (e *Engine) ProcessValues(values []emulator.Value) error {
 		}
 
 		switch t {
+		case emulator.FlagCount:
+			e.L.SetGlobal(name+"_last", lua.LNumber(e.values[name].FlagCount))
+			e.L.SetGlobal(name, lua.LNumber(newValue.FlagCount))
 		case emulator.Bool:
 			e.L.SetGlobal(name+"_last", lua.LBool(e.values[name].Bool))
 			e.L.SetGlobal(name, lua.LBool(newValue.Bool))

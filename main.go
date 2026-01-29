@@ -34,7 +34,7 @@ func main() {
 	err = wails.Run(&options.App{
 		Title:  "FactFinder",
 		Width:  400,
-		Height: 350,
+		Height: 450,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},

@@ -19,6 +19,8 @@ type ConnectionState = {
 
 function App() {
     const [providers, setProviders] = useState<Provider[]>([]);
+    const [emulatorState, setEmulatorState] = useState<Array<Array<string>>>([]);
+    const [emulatorValues, setEmulatorValues] = useState<Array<Array<string>>>([]);
     const [emulatorConnection, setEmulatorConnection] = useState<ConnectionState>({
         connection_status: ConnectionStatus.Disconnected,
         message: "Emulator Not Found",
@@ -37,6 +39,18 @@ function App() {
     useEffect(() => {
         return EventsOn("opensplit:connection",(s: ConnectionState) => {
             setOpenSplitConnection(s);
+        })
+    }, [])
+
+    useEffect(() => {
+        return EventsOn("emulator:state",(s: Array<Array<string>>) => {
+            setEmulatorState(s);
+        })
+    }, [])
+
+    useEffect(() => {
+        return EventsOn("emulator:values",(s: Array<Array<string>>) => {
+            setEmulatorValues(s);
         })
     }, [])
 
@@ -118,6 +132,39 @@ function App() {
                     </tbody>
                 </table>
             </div>
+            <hr />
+            <h5 style={{textAlign:"left", marginBottom:5}}>State</h5>
+            <div style={{ display:"flex", justifyContent:"start", fontFamily:"monospace" }}>
+                <table>
+                    <tbody>
+                    {
+                        emulatorState.map(s =>
+                            <tr key={s[0]}>
+                                <td style={{textAlign: "left"}}>{s[0]}</td>
+                                <td style={{textAlign: "left"}}>{s[1]}</td>
+                            </tr>
+                        )
+                    }
+                    </tbody>
+                </table>
+            </div>
+
+            <h5 style={{textAlign:"left", marginBottom:5}}>Watches</h5>
+            <div style={{fontFamily:"monospace" }}>
+                <table>
+                    <tbody>
+                    {
+                        emulatorValues.map(s =>
+                            <tr key={s[0]}>
+                                <td style={{textAlign: "left"}}>{s[0]}</td>
+                                <td style={{textAlign: "left"}}>{s[1]}</td>
+                            </tr>
+                        )
+                    }
+                    </tbody>
+                </table>
+            </div>
+
         </div>
     )
 }
