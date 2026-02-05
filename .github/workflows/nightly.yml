@@ -59,43 +59,41 @@ jobs:
               with:
                   node-version: 20
 
-            - name: Upgrade npm
-              run: npm i -g npm@latest
-
-            - name: Create lockfile for cache
-              run: npm install --prefix frontend --package-lock-only --no-audit --no-fund
-
             - uses: actions/setup-node@v6
               with:
-                  node-version: 20
-                  cache: npm
-                  cache-dependency-path: frontend/package-lock.json
+                node-version: 20
+                cache: npm
+                cache-dependency-path: frontend/package-lock.json
+
+            - name: Build frontend
+              working-directory: frontend
+              run: npm run build
 
             # Use npm install (not ci) so platform optionalDependencies resolve per runner OS/arch
             - name: Install frontend deps
               run: npm install --prefix frontend
 
             # Ensure the *exact* rollup-native version is present (matches rollup's version)
-            - name: Ensure Rollup native binary (exact version)
-              working-directory: frontend
-              shell: bash
-              run: |
-                  set -euo pipefail
-                  os="$(uname -s)"; arch="$(uname -m)"
-                  case "$os-$arch" in
-                    Linux-x86_64)  pkg='@rollup/rollup-linux-x64-gnu' ;;
-                    Linux-aarch64) pkg='@rollup/rollup-linux-arm64-gnu' ;;
-                    Darwin-arm64)  pkg='@rollup/rollup-darwin-arm64' ;;
-                    Darwin-x86_64) pkg='@rollup/rollup-darwin-x64' ;;
-                    MINGW*|MSYS*|CYGWIN*|Windows_NT-*) pkg='@rollup/rollup-win32-x64-msvc' ;;
-                    *) pkg='' ;;
-                  esac
-                  if [ -n "$pkg" ]; then
-                    ver="$(node -p "require('rollup/package.json').version")"
-                    echo "Installing $pkg@$ver"
-                    npm i --no-save -D "$pkg@$ver"
-                    node -e "require('$pkg'); console.log('OK: $pkg present')"
-                  fi
+#            - name: Ensure Rollup native binary (exact version)
+#              working-directory: frontend
+#              shell: bash
+#              run: |
+#                  set -euo pipefail
+#                  os="$(uname -s)"; arch="$(uname -m)"
+#                  case "$os-$arch" in
+#                    Linux-x86_64)  pkg='@rollup/rollup-linux-x64-gnu' ;;
+#                    Linux-aarch64) pkg='@rollup/rollup-linux-arm64-gnu' ;;
+#                    Darwin-arm64)  pkg='@rollup/rollup-darwin-arm64' ;;
+#                    Darwin-x86_64) pkg='@rollup/rollup-darwin-x64' ;;
+#                    MINGW*|MSYS*|CYGWIN*|Windows_NT-*) pkg='@rollup/rollup-win32-x64-msvc' ;;
+#                    *) pkg='' ;;
+#                  esac
+#                  if [ -n "$pkg" ]; then
+#                    ver="$(node -p "require('rollup/package.json').version")"
+#                    echo "Installing $pkg@$ver"
+#                    npm i --no-save -D "$pkg@$ver"
+#                    node -e "require('$pkg'); console.log('OK: $pkg present')"
+#                  fi
 
             # Build the frontend now, so we can skip Wails' install/build
             - name: Build frontend
@@ -176,14 +174,6 @@ jobs:
                   name: nightly-zips-${{ matrix.name }}
                   path: ${{ env.ARCHIVE }}
 
-            # (Optional) Debug if rollup fails again
-            - name: Debug rollup layout
-              if: failure()
-              working-directory: frontend
-              run: |
-                  node -p "require('rollup/package.json').version" || true
-                  ls -la node_modules/@rollup || true
-                  grep -A2 optionalDependencies node_modules/rollup/package.json || true
 
     publish:
         name: Publish Nightly Release

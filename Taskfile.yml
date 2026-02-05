@@ -34,16 +34,15 @@ tasks:
                 {{end}}
 
     deps:
-        desc: Install frontend deps (clean, reproducible)
+        desc: Install frontend deps
+        dir: frontend
         cmds:
-            - cd frontend
             - npm ci
 
     dev:
         desc: Start Wails dev server (installs deps on first run)
         deps: [ ensure-dist ]
         cmds:
-            # Step 1: install frontend dependencies
             - |
                 cd frontend
                 {{if eq OS "windows"}}
@@ -52,7 +51,6 @@ tasks:
                 bash -lc 'if [ -f package-lock.json ]; then npm ci; else npm install; fi'
                 {{end}}
 
-            # Step 2: run Wails with environment & tags depending on OS / Linux session
             - |
                 {{- if eq OS "windows" -}}
                 wails dev
@@ -90,7 +88,7 @@ tasks:
                 {{- end }}
 
     build:
-        desc: Production build (clean bin)
+        desc: Production build
         deps: [ ensure-dist, deps ]
         cmds:
             - |
