@@ -65,40 +65,6 @@ jobs:
                 cache: npm
                 cache-dependency-path: frontend/package-lock.json
 
-            - name: Build frontend
-              working-directory: frontend
-              run: npm run build
-
-            # Use npm install (not ci) so platform optionalDependencies resolve per runner OS/arch
-            - name: Install frontend deps
-              run: npm install --prefix frontend
-
-            # Ensure the *exact* rollup-native version is present (matches rollup's version)
-#            - name: Ensure Rollup native binary (exact version)
-#              working-directory: frontend
-#              shell: bash
-#              run: |
-#                  set -euo pipefail
-#                  os="$(uname -s)"; arch="$(uname -m)"
-#                  case "$os-$arch" in
-#                    Linux-x86_64)  pkg='@rollup/rollup-linux-x64-gnu' ;;
-#                    Linux-aarch64) pkg='@rollup/rollup-linux-arm64-gnu' ;;
-#                    Darwin-arm64)  pkg='@rollup/rollup-darwin-arm64' ;;
-#                    Darwin-x86_64) pkg='@rollup/rollup-darwin-x64' ;;
-#                    MINGW*|MSYS*|CYGWIN*|Windows_NT-*) pkg='@rollup/rollup-win32-x64-msvc' ;;
-#                    *) pkg='' ;;
-#                  esac
-#                  if [ -n "$pkg" ]; then
-#                    ver="$(node -p "require('rollup/package.json').version")"
-#                    echo "Installing $pkg@$ver"
-#                    npm i --no-save -D "$pkg@$ver"
-#                    node -e "require('$pkg'); console.log('OK: $pkg present')"
-#                  fi
-
-            # Build the frontend now, so we can skip Wails' install/build
-            - name: Build frontend
-              run: npm run build --prefix frontend
-
             - name: "Linux: install Wails build deps"
               if: ${{ startsWith(matrix.runner, 'ubuntu-') }}
               shell: bash
@@ -122,26 +88,9 @@ jobs:
             - name: Ensure frontend/dist exists
               run: task ensure-dist
 
-            - name: Clean old binaries
+            - name: Wails build
               shell: bash
-              run: rm -rf build/bin || true
-
-            # IMPORTANT: -s skips Wails' frontend install/build steps
-            - name: Wails build (current OS/arch, skip frontend steps)
-              shell: bash
-              env:
-                  GOOS: ${{ matrix.goos }}
-                  GOARCH: ${{ matrix.goarch }}
-                  # CGO is required on Linux/macOS; leave unset on Windows
-                  CGO_ENABLED: ${{ startsWith(matrix.goos, 'linux') || startsWith(matrix.goos, 'darwin') && '1' || '' }}
-              run: |
-                  set -euo pipefail
-                  if [ -n "${{ matrix.tags }}" ]; then
-                    echo "Building with tags: ${{ matrix.tags }}"
-                    wails build -tags "${{ matrix.tags }}" -clean -s
-                  else
-                    wails build -clean -s
-                  fi
+              run: task build
 
             - name: Package
               shell: bash

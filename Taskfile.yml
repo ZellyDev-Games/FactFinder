@@ -33,12 +33,6 @@ tasks:
                 : > "{{.FRONTEND_DIST}}/.gitkeep"
                 {{end}}
 
-    deps:
-        desc: Install frontend deps
-        dir: frontend
-        cmds:
-            - npm ci
-
     dev:
         desc: Start Wails dev server (installs deps on first run)
         deps: [ ensure-dist ]
@@ -89,7 +83,7 @@ tasks:
 
     build:
         desc: Production build
-        deps: [ ensure-dist, deps ]
+        deps: [ ensure-dist ]
         cmds:
             - |
                 {{if eq OS "windows"}}
