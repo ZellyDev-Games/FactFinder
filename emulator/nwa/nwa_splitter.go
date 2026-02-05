@@ -8,9 +8,8 @@ import (
 	"strings"
 )
 
-// public
-type NWASplitter struct {
-	Client          NWASyncClient
+type Splitter struct {
+	Client          SyncClient
 	nwaMemory       []memoryWatcher
 	startConditions []conditionList
 	resetConditions []conditionList
@@ -40,8 +39,8 @@ type conditionList struct {
 	memory []element
 }
 
-// Setup the memory map being read by the nwa splitter and the maps for the reset and split conditions
-func (b *NWASplitter) MemAndConditionsSetup(memData []string, startConditionImport []string, resetConditionImport []string, splitConditionImport []string) {
+// MemAndConditionsSetup sets up the memory map being read by the nwa splitter and the maps for the reset and split conditions
+func (b *Splitter) MemAndConditionsSetup(memData []string, startConditionImport []string, resetConditionImport []string, splitConditionImport []string) {
 	delimiter1 := "="
 	delimiter2 := "≠"
 	delimiter3 := "<"
@@ -460,7 +459,7 @@ func (b *NWASplitter) MemAndConditionsSetup(memData []string, startConditionImpo
 	}
 }
 
-func (b *NWASplitter) ClientID() {
+func (b *Splitter) ClientID() {
 	cmd := "MY_NAME_IS"
 	args := "OpenSplit"
 	summary, err := b.Client.ExecuteCommand(cmd, &args)
@@ -471,7 +470,7 @@ func (b *NWASplitter) ClientID() {
 	fmt.Printf("%#v\n", summary)
 }
 
-func (b *NWASplitter) EmuInfo() {
+func (b *Splitter) EmuInfo() {
 	cmd := "EMULATOR_INFO"
 	args := "0"
 	summary, err := b.Client.ExecuteCommand(cmd, &args)
@@ -482,7 +481,7 @@ func (b *NWASplitter) EmuInfo() {
 	fmt.Printf("%#v\n", summary)
 }
 
-func (b *NWASplitter) EmuGameInfo() {
+func (b *Splitter) EmuGameInfo() {
 	cmd := "GAME_INFO"
 	summary, err := b.Client.ExecuteCommand(cmd, nil)
 	if err != nil {
@@ -492,7 +491,7 @@ func (b *NWASplitter) EmuGameInfo() {
 	fmt.Printf("%#v\n", summary)
 }
 
-func (b *NWASplitter) EmuStatus() {
+func (b *Splitter) EmuStatus() {
 	cmd := "EMULATION_STATUS"
 	summary, err := b.Client.ExecuteCommand(cmd, nil)
 	if err != nil {
@@ -502,7 +501,7 @@ func (b *NWASplitter) EmuStatus() {
 	fmt.Printf("%#v\n", summary)
 }
 
-func (b *NWASplitter) CoreInfo() {
+func (b *Splitter) CoreInfo() {
 	cmd := "CORE_CURRENT_INFO"
 	summary, err := b.Client.ExecuteCommand(cmd, nil)
 	if err != nil {
@@ -512,7 +511,7 @@ func (b *NWASplitter) CoreInfo() {
 	fmt.Printf("%#v\n", summary)
 }
 
-func (b *NWASplitter) CoreMemories() {
+func (b *Splitter) CoreMemories() {
 	cmd := "CORE_MEMORIES"
 	summary, err := b.Client.ExecuteCommand(cmd, nil)
 	if err != nil {
@@ -522,7 +521,7 @@ func (b *NWASplitter) CoreMemories() {
 	fmt.Printf("%#v\n", summary)
 }
 
-func (b *NWASplitter) SoftResetConsole() {
+func (b *Splitter) SoftResetConsole() {
 	cmd := "EMULATION_RESET"
 	summary, err := b.Client.ExecuteCommand(cmd, nil)
 	if err != nil {
@@ -532,7 +531,7 @@ func (b *NWASplitter) SoftResetConsole() {
 	fmt.Printf("%#v\n", summary)
 }
 
-func (b *NWASplitter) HardResetConsole() {
+func (b *Splitter) HardResetConsole() {
 	// cmd := "EMULATION_STOP"
 	cmd := "EMULATION_RELOAD"
 	summary, err := b.Client.ExecuteCommand(cmd, nil)
@@ -543,9 +542,9 @@ func (b *NWASplitter) HardResetConsole() {
 	fmt.Printf("%#v\n", summary)
 }
 
-// currently only suppports 1 memory source at a time
+// Update currently only supports 1 memory source at a time
 // likely WRAM for SNES and RAM for NES
-func (b *NWASplitter) Update(splitIndex int) (nwaSummary, error) {
+func (b *Splitter) Update(splitIndex int) (Summary, error) {
 
 	cmd := "CORE_READ"
 	domain := b.nwaMemory[0].memoryBank
@@ -559,7 +558,7 @@ func (b *NWASplitter) Update(splitIndex int) (nwaSummary, error) {
 	args := domain + requestString
 	summary, err := b.Client.ExecuteCommand(cmd, &args)
 	if err != nil {
-		return nwaSummary{}, err
+		return Summary{}, err
 	}
 	fmt.Printf("%#v\n", summary)
 
@@ -593,7 +592,7 @@ func (b *NWASplitter) Update(splitIndex int) (nwaSummary, error) {
 			}
 		}
 
-	case NWAError:
+	case Error:
 		fmt.Printf("%#v\n", v)
 	default:
 		fmt.Printf("%#v\n", v)
@@ -603,21 +602,21 @@ func (b *NWASplitter) Update(splitIndex int) (nwaSummary, error) {
 	reset := b.reset()
 	split := b.split(splitIndex)
 
-	return nwaSummary{
+	return Summary{
 		Start: start,
 		Reset: reset,
 		Split: split,
 	}, nil
 }
 
-type nwaSummary struct {
+type Summary struct {
 	Start bool
 	Reset bool
 	Split bool
 }
 
 // Checks conditions and returns start state
-func (b *NWASplitter) start() bool {
+func (b *Splitter) start() bool {
 	fmt.Printf("Checking start state\n")
 	for _, p := range b.startConditions {
 		startState := true
@@ -637,7 +636,7 @@ func (b *NWASplitter) start() bool {
 }
 
 // Checks conditions and returns reset state
-func (b *NWASplitter) reset() bool {
+func (b *Splitter) reset() bool {
 	fmt.Printf("Checking reset state\n")
 	for _, p := range b.resetConditions {
 		resetState := true
@@ -657,7 +656,7 @@ func (b *NWASplitter) reset() bool {
 }
 
 // Checks conditions and returns split state
-func (b *NWASplitter) split(split int) bool {
+func (b *Splitter) split(split int) bool {
 	fmt.Printf("Checking split state\n")
 	splitState := true
 	var tempstate bool

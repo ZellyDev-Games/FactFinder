@@ -80,7 +80,7 @@ func (e *Engine) Close() {
 		e.L.Close()
 	}
 	e.updateConnectionStatus(false)
-	e.conn.Close()
+	_ = e.conn.Close()
 	e.conn = nil
 }
 

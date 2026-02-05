@@ -26,7 +26,7 @@ const (
 	WaitingForGame ConnectionStatus = 3
 )
 
-var GameNotLoadedError error = errors.New("Game not loaded")
+var ErrGameNotLoaded = errors.New("game not loaded")
 
 type Value struct {
 	Type      ValueType

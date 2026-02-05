@@ -85,7 +85,7 @@ func decodeRetroArchReadCoreMemoryBytes(resp []byte, dst []byte, want int) error
 	i = skipField(resp, i)
 
 	if i < len(resp) && resp[i] == '-' {
-		return emulator.GameNotLoadedError
+		return emulator.ErrGameNotLoaded
 	}
 
 	for j := 0; j < want; j++ {

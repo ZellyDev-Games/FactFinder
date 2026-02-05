@@ -12,19 +12,18 @@ import (
 	"time"
 )
 
-// public
-type NWAError struct {
+type Error struct {
 	Kind   errorKind
 	Reason string
 }
 
-type NWASyncClient struct {
+type SyncClient struct {
 	Connection net.Conn
 	Port       uint32
 	Addr       net.Addr
 }
 
-func Connect(ip string, port uint32) (*NWASyncClient, error) {
+func Connect(ip string, port uint32) (*SyncClient, error) {
 	address := fmt.Sprintf("%s:%d", ip, port)
 	tcpAddr, err := net.ResolveTCPAddr("tcp", address)
 	if err != nil {
@@ -36,14 +35,14 @@ func Connect(ip string, port uint32) (*NWASyncClient, error) {
 		return nil, err
 	}
 
-	return &NWASyncClient{
+	return &SyncClient{
 		Connection: conn,
 		Port:       port,
 		Addr:       tcpAddr,
 	}, nil
 }
 
-func (c *NWASyncClient) ExecuteCommand(cmd string, argString *string) (emulatorReply, error) {
+func (c *SyncClient) ExecuteCommand(cmd string, argString *string) (EmulatorReply, error) {
 	var command string
 	_ = c.Connection.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 	if argString == nil {
@@ -60,7 +59,7 @@ func (c *NWASyncClient) ExecuteCommand(cmd string, argString *string) (emulatorR
 	return c.getReply()
 }
 
-func (c *NWASyncClient) ExecuteRawCommand(cmd string, argString *string) {
+func (c *SyncClient) ExecuteRawCommand(cmd string, argString *string) {
 	var command string
 	_ = c.Connection.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 	if argString == nil {
@@ -73,7 +72,7 @@ func (c *NWASyncClient) ExecuteRawCommand(cmd string, argString *string) {
 	_, _ = io.WriteString(c.Connection, command)
 }
 
-// func (c *NWASyncClient) IsConnected() bool {
+// func (c *SyncClient) IsConnected() bool {
 // 	// net.Conn in Go does not have a Peek method.
 // 	// We can try to set a read deadline and read with a zero-length buffer to check connection.
 // 	// But zero-length read returns immediately, so we try to read 1 byte with deadline.
@@ -95,12 +94,12 @@ func (c *NWASyncClient) ExecuteRawCommand(cmd string, argString *string) {
 // 	return false
 // }
 
-func (c *NWASyncClient) Close() {
+func (c *SyncClient) Close() {
 	// TODO: handle the error
 	_ = c.Connection.Close()
 }
 
-func (c *NWASyncClient) Reconnected() (bool, error) {
+func (c *SyncClient) Reconnected() (bool, error) {
 	conn, err := net.DialTimeout("tcp", c.Addr.String(), time.Second)
 	if err != nil {
 		return false, err
@@ -122,9 +121,9 @@ const (
 
 type hash map[string]string
 
-type emulatorReply interface{}
+type EmulatorReply interface{}
 
-func (c *NWASyncClient) getReply() (emulatorReply, error) {
+func (c *SyncClient) getReply() (EmulatorReply, error) {
 	readStream := bufio.NewReader(c.Connection)
 	firstByte, err := readStream.ReadByte()
 	if err != nil {
@@ -177,12 +176,12 @@ func (c *NWASyncClient) getReply() (emulatorReply, error) {
 				default:
 					mkind = InvalidError
 				}
-				return NWAError{
+				return Error{
 					Kind:   mkind,
 					Reason: reason,
 				}, nil
 			} else {
-				return NWAError{
+				return Error{
 					Kind:   InvalidError,
 					Reason: "Invalid reason",
 				}, nil
@@ -211,7 +210,7 @@ func (c *NWASyncClient) getReply() (emulatorReply, error) {
 }
 
 // This would be used if I actually sent data
-// func (c *NWASyncClient) sendData(data []byte) {
+// func (c *SyncClient) sendData(data []byte) {
 // 	buf := make([]byte, 5)
 // 	size := len(data)
 // 	buf[0] = 0

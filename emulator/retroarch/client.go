@@ -51,7 +51,7 @@ func (c *Client) ConnectEmulator() emulator.ConnectionStatus {
 			continue
 		}
 
-		c.conn.SetReadDeadline(time.Now().Add(time.Second * 1))
+		_ = c.conn.SetReadDeadline(time.Now().Add(time.Second * 1))
 		n, _, err := c.conn.ReadFromUDP(c.respBuf)
 		if err != nil {
 			fmt.Println(err)
@@ -59,7 +59,7 @@ func (c *Client) ConnectEmulator() emulator.ConnectionStatus {
 		}
 
 		if n > 0 {
-			c.conn.SetReadDeadline(time.Time{})
+			_ = c.conn.SetReadDeadline(time.Time{})
 			break
 		}
 	}
@@ -129,7 +129,7 @@ func (c *Client) GetValues(readplan *emulator.ReadPlan) ([]emulator.Value, error
 			return nil, err
 		}
 
-		c.conn.SetReadDeadline(time.Now().Add(time.Millisecond * 500))
+		_ = c.conn.SetReadDeadline(time.Now().Add(time.Millisecond * 500))
 		n, err := c.conn.Read(c.respBuf)
 		if err != nil {
 			c.m.Unlock()
@@ -146,7 +146,7 @@ func (c *Client) GetValues(readplan *emulator.ReadPlan) ([]emulator.Value, error
 		raw := c.byteBuf[:need]
 
 		if err = decodeRetroArchReadCoreMemoryBytes(c.respBuf[:n], raw, need); err != nil {
-			if errors.Is(err, emulator.GameNotLoadedError) {
+			if errors.Is(err, emulator.ErrGameNotLoaded) {
 				return nil, err
 			}
 

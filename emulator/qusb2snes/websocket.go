@@ -45,7 +45,7 @@ func (w *WebsocketClient) Connected() bool {
 
 func (w *WebsocketClient) WriteMessage(data []byte) error {
 	w.m.Lock()
-	if w.connected == false || w.conn == nil {
+	if !w.connected || w.conn == nil {
 		w.m.Unlock()
 		return errors.New("WriteMessage called on disconnected client")
 	}
@@ -63,7 +63,7 @@ func (w *WebsocketClient) WriteMessage(data []byte) error {
 
 func (w *WebsocketClient) ReadMessage() (p []byte, err error) {
 	w.m.Lock()
-	if w.connected == false || w.conn == nil {
+	if !w.connected || w.conn == nil {
 		w.m.Unlock()
 		return []byte{}, errors.New("ReadMessage called on disconnected client")
 	}

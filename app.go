@@ -23,6 +23,7 @@ type ConnectionState struct {
 // App struct
 type App struct {
 	ctx              context.Context
+	Ready            bool
 	factFinderFolder string
 	readPlan         *emulator.ReadPlan
 	memoryReader     emulator.MemoryReader
@@ -209,7 +210,7 @@ func (a *App) StartEmulatorClient() error {
 				// The emulator is connected, but a game is not loaded
 				//(e.g. RetroArch will return -1 on READ_CORE_MEMORY if it's running, but no game is loaded)
 				// Inform the UI that we are waiting on something.
-				if errors.Is(err, emulator.GameNotLoadedError) {
+				if errors.Is(err, emulator.ErrGameNotLoaded) {
 					connectionStatus.ConnectionStatus = emulator.WaitingForGame
 					connectionStatus.Message = "Game not loaded"
 
@@ -218,7 +219,7 @@ func (a *App) StartEmulatorClient() error {
 				}
 
 				// Otherwise dump the error to log and continue
-				fmt.Println(err)
+				fmt.Println("lua error", err)
 				continue
 			}
 

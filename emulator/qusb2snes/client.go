@@ -11,7 +11,8 @@ import (
 )
 
 const wramBase = 0xF50000
-const sramBase = 0xE00000
+
+//const sramBase = 0xE00000
 
 type MessageReaderWriter interface {
 	WriteMessage(data []byte) error
