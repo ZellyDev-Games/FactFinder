@@ -15,7 +15,7 @@ tasks:
     cmds:
       - |
         {{if eq OS "windows"}}
-        powershell -NoProfile -Command "Remove-Item -ErrorAction SilentlyContinue -Recurse -Force -LiteralPath 'build/bin','frontend/node_modules'; exit 0"
+        powershell -NoProfile -Command "try { Remove-Item -Recurse -Force -LiteralPath 'build/bin','frontend/node_modules' -ErrorAction Stop } catch { } ; exit 0"
         {{else}}
         rm -rf build/bin
         rm -rf frontend/node_modules
@@ -52,7 +52,7 @@ tasks:
     cmds:
       - |
         {{if eq OS "windows"}}
-        powershell -NoProfile -Command "Remove-Item -Recurse -Force 'build/bin' -ErrorAction SilentlyContinue"
+        powershell -NoProfile -Command "try { Remove-Item -Recurse -Force -LiteralPath 'build/bin','frontend/node_modules' -ErrorAction Stop } catch { } ; exit 0"
         {{else}}
         rm -rf build/bin
         {{end}}
