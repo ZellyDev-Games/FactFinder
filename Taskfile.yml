@@ -52,7 +52,7 @@ tasks:
     cmds:
       - |
         {{if eq OS "windows"}}
-        powershell -NoProfile -Command "try { Remove-Item -Recurse -Force -LiteralPath 'build/bin','frontend/node_modules' -ErrorAction Stop } catch { } ; exit 0"
+        powershell -NoProfile -Command "try { Remove-Item -Recurse -Force 'build/bin' -ErrorAction Stop } catch { } ; exit 0"
         {{else}}
         rm -rf build/bin
         {{end}}
