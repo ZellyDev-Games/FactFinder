@@ -1,4 +1,5 @@
 build/bin
 frontend/dist
+frontend/wailsjs
 frontend/node_modules
 cover.out
