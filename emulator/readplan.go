@@ -9,11 +9,36 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type ResolvedWatch struct {
+	Spec   ReadSpec
+	Addr   int
+	Size   int
+	Offset int
+}
+
+type MergedRegion struct {
+	Bank    Bank
+	Start   int
+	Size    int
+	Watches []ResolvedWatch
+	Buffer  []byte
+}
+
+type CompiledReadPlan struct {
+	Regions []MergedRegion
+}
+
 type Bank string
 
 const (
-	WRAM Bank = "wram"
-	SRAM Bank = "sram"
+	WRAM  Bank = "wram"  // SNES/GB/GBC Memory
+	SRAM  Bank = "sram"  // SNES Save Memory
+	RAM   Bank = "ram"   // PSX/NES/Genesis Memory
+	IWRAM Bank = "iwram" // GBA Internal Memory
+	EWRAM Bank = "ewram" // GBA External Memory
+	FCRAM Bank = "fcram" // 3DS Memory
+	PSRAM Bank = "psram" // DS Memory
+	RDRAM Bank = "rdram" // N64 Memory
 )
 
 type HexInt int

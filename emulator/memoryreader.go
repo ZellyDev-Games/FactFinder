@@ -41,5 +41,6 @@ type MemoryReader interface {
 	ConnectEmulator() ConnectionStatus
 	EmulatorConnected() ConnectionStatus
 	GameConnected() bool
-	GetValues(*ReadPlan) ([]Value, error)
+	GetValues(*CompiledReadPlan) ([]Value, error)
+	CompileReadPlan(plan *ReadPlan) *CompiledReadPlan
 }
