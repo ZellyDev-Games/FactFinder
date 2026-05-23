@@ -3,16 +3,19 @@ package retroarch
 import (
 	"FactFinder/emulator"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"math/bits"
 	"net"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
 )
 
 const wramOffset = 0x7e0000
+
+const maxGap = 16
+const maxReadSize = 4096
 
 type Client struct {
 	m                 sync.Mutex
@@ -86,120 +89,205 @@ func (c *Client) buildReadCoreMemoryCmd(address int, size int) []byte {
 	return c.cmdBuf
 }
 
-func (c *Client) GetValues(readplan *emulator.ReadPlan) ([]emulator.Value, error) {
-	{
-		_ = c.conn.SetReadDeadline(time.Now())
-		for {
-			if _, err := c.conn.Read(c.respBuf); err != nil {
-				var ne net.Error
-				if errors.As(err, &ne) && ne.Timeout() {
-					break
-				}
-				return nil, err
-			}
-		}
-		_ = c.conn.SetReadDeadline(time.Time{})
-	}
-
-	vals := make([]emulator.Value, 0, len(readplan.Watches))
-
-	for _, spec := range readplan.Watches {
-		address := 0
-		if spec.Bank == emulator.WRAM {
-			address = int(spec.Address) + wramOffset
-		}
-		if spec.Bank == emulator.SRAM {
-			if readplan.HiROM {
-				address = 0x300000 + 0x6000 + (int(spec.Address) % 0xA000) + (int(spec.Address)/0xA000)*0x10000
-			} else {
-				address = 0x700000 + (int(spec.Address) % 0x8000) + (int(spec.Address)/0x8000)*0x10000
-			}
-		}
-
-		size := spec.SizeOverride
-		if size == 0 {
-			size = spec.Size()
-		}
-		msg := c.buildReadCoreMemoryCmd(address, size)
-		c.m.Lock()
-		if _, err := c.conn.Write(msg); err != nil {
-			c.m.Unlock()
-			c.emulatorConnected = emulator.Reconnecting
-			fmt.Printf("failed to write message to connection, signaling reconnect.: %s\n", err)
-			return nil, err
-		}
-
-		_ = c.conn.SetReadDeadline(time.Now().Add(time.Millisecond * 500))
-		n, err := c.conn.Read(c.respBuf)
-		if err != nil {
-			c.m.Unlock()
-			c.emulatorConnected = emulator.Reconnecting
-			fmt.Printf("failed to read message from connection, signaling reconnect.: %s\n", err)
-			return nil, err
-		}
-		c.m.Unlock()
-
-		need := spec.Size()
-		if cap(c.byteBuf) < need {
-			c.byteBuf = make([]byte, need)
-		}
-		raw := c.byteBuf[:need]
-
-		if err = decodeRetroArchReadCoreMemoryBytes(c.respBuf[:n], raw, need); err != nil {
-			if errors.Is(err, emulator.ErrGameNotLoaded) {
-				return nil, err
-			}
-
-			return nil, fmt.Errorf("decode failed for %s: %w", spec.Name, err)
-		}
-
-		val := emulator.Value{Type: spec.Type, Name: spec.Name}
-
-		var u uint64
-		switch need {
-		case 1:
-			u = uint64(raw[0])
-		case 2:
-			u = uint64(binary.LittleEndian.Uint16(raw))
-		case 4:
-			u = uint64(binary.LittleEndian.Uint32(raw))
-		case 8:
-			u = binary.LittleEndian.Uint64(raw)
-		default:
-			return nil, fmt.Errorf("unsupported size %d", need)
-		}
-
-		switch spec.Type {
-		case emulator.I8:
-			val.Signed = int64(int8(raw[0]))
-		case emulator.I16:
-			val.Signed = int64(int16(binary.LittleEndian.Uint16(raw)))
-		case emulator.I32:
-			val.Signed = int64(int32(binary.LittleEndian.Uint32(raw)))
-		case emulator.I64:
-			val.Signed = int64(binary.LittleEndian.Uint64(raw))
-		case emulator.U8, emulator.U16, emulator.U32, emulator.U64:
-			val.Unsigned = u
-		case emulator.Bool:
-			val.Bool = u != 0
-		case emulator.FlagCount:
-			if spec.Mask != 0 {
-				u = u & 0x3FFF
-			}
-			val.FlagCount = bits.OnesCount64(u)
-		}
-
-		vals = append(vals, val)
-	}
-
-	fmt.Println(vals)
-	return vals, nil
-}
-
 func (c *Client) EmulatorConnected() emulator.ConnectionStatus {
 	return c.emulatorConnected
 }
 
 func (c *Client) GameConnected() bool {
 	return c.gameConnected
+}
+
+func (c *Client) CompileReadPlan(plan *emulator.ReadPlan) *emulator.CompiledReadPlan {
+	type tempWatch struct {
+		Spec emulator.ReadSpec
+		Addr int
+		Size int
+	}
+
+	tmp := make([]tempWatch, 0, len(plan.Watches))
+
+	for _, spec := range plan.Watches {
+		addr := resolveAddress(plan, spec)
+
+		size := spec.SizeOverride
+		if size == 0 {
+			size = spec.Size()
+		}
+
+		tmp = append(tmp, tempWatch{
+			Spec: spec,
+			Addr: addr,
+			Size: size,
+		})
+	}
+
+	slices.SortFunc(tmp, func(a, b tempWatch) int {
+		return a.Addr - b.Addr
+	})
+
+	out := &emulator.CompiledReadPlan{}
+
+	for _, w := range tmp {
+		if len(out.Regions) == 0 {
+			out.Regions = append(out.Regions, emulator.MergedRegion{
+				Start: w.Addr,
+				Size:  w.Size,
+			})
+		}
+
+		cur := &out.Regions[len(out.Regions)-1]
+
+		curEnd := cur.Start + cur.Size
+		wEnd := w.Addr + w.Size
+
+		canMerge :=
+			w.Addr <= curEnd+maxGap &&
+				(wEnd-cur.Start) <= maxReadSize
+
+		if !canMerge {
+			out.Regions = append(out.Regions, emulator.MergedRegion{
+				Start: w.Addr,
+				Size:  w.Size,
+			})
+
+			cur = &out.Regions[len(out.Regions)-1]
+		} else {
+			if wEnd > curEnd {
+				cur.Size = wEnd - cur.Start
+			}
+		}
+
+		cur.Watches = append(cur.Watches, emulator.ResolvedWatch{
+			Spec:   w.Spec,
+			Addr:   w.Addr,
+			Size:   w.Size,
+			Offset: w.Addr - cur.Start,
+		})
+	}
+
+	for i := range out.Regions {
+		out.Regions[i].Buffer = make([]byte, out.Regions[i].Size)
+	}
+
+	return out
+}
+
+func resolveAddress(plan *emulator.ReadPlan, spec emulator.ReadSpec) int {
+	switch spec.Bank {
+	case emulator.WRAM:
+		return int(spec.Address) + wramOffset
+
+	case emulator.SRAM:
+		if plan.HiROM {
+			return 0x300000 +
+				0x6000 +
+				(int(spec.Address) % 0xA000) +
+				(int(spec.Address)/0xA000)*0x10000
+		}
+
+		return 0x700000 +
+			(int(spec.Address) % 0x8000) +
+			(int(spec.Address)/0x8000)*0x10000
+	}
+
+	return 0
+}
+
+func (c *Client) GetValues(plan *emulator.CompiledReadPlan) ([]emulator.Value, error) {
+
+	vals := make([]emulator.Value, 0)
+
+	for _, region := range plan.Regions {
+		msg := c.buildReadCoreMemoryCmd(
+			region.Start,
+			region.Size,
+		)
+
+		c.m.Lock()
+
+		_, err := c.conn.Write(msg)
+		if err != nil {
+			c.m.Unlock()
+			return nil, err
+		}
+
+		_ = c.conn.SetReadDeadline(
+			time.Now().Add(500 * time.Millisecond),
+		)
+
+		n, err := c.conn.Read(c.respBuf)
+
+		c.m.Unlock()
+
+		if err != nil {
+			return nil, err
+		}
+
+		err = decodeRetroArchReadCoreMemoryBytes(
+			c.respBuf[:n],
+			region.Buffer,
+			region.Size,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, watch := range region.Watches {
+			raw := region.Buffer[watch.Offset : watch.Offset+watch.Size]
+
+			val := decodeValue(watch.Spec, raw)
+
+			if val == nil {
+				return nil, fmt.Errorf("unsupported size %d", watch.Size)
+			}
+
+			vals = append(vals, *val)
+		}
+	}
+
+	return vals, nil
+}
+
+// GB/GBC/GBA/SNES/NES/DS/3DS/PSX = little endian
+// Genesis/N64 = big endian
+func decodeValue(readSpec emulator.ReadSpec, raw []byte) *emulator.Value {
+	val := emulator.Value{Type: readSpec.Type, Name: readSpec.Name}
+
+	need := readSpec.Size()
+	var u uint64
+
+	switch need {
+	case 1:
+		u = uint64(raw[0])
+	case 2:
+		u = uint64(binary.LittleEndian.Uint16(raw))
+	case 4:
+		u = uint64(binary.LittleEndian.Uint32(raw))
+	case 8:
+		u = binary.LittleEndian.Uint64(raw)
+	default:
+		return nil
+	}
+
+	switch readSpec.Type {
+	case emulator.I8:
+		val.Signed = int64(int8(raw[0]))
+	case emulator.I16:
+		val.Signed = int64(int16(binary.LittleEndian.Uint16(raw)))
+	case emulator.I32:
+		val.Signed = int64(int32(binary.LittleEndian.Uint32(raw)))
+	case emulator.I64:
+		val.Signed = int64(binary.LittleEndian.Uint64(raw))
+	case emulator.U8, emulator.U16, emulator.U32, emulator.U64:
+		val.Unsigned = u
+	case emulator.Bool:
+		val.Bool = u != 0
+	case emulator.FlagCount:
+		if readSpec.Mask != 0 {
+			u = u & 0x3FFF
+		}
+		val.FlagCount = bits.OnesCount64(u)
+	}
+
+	return &val
 }
