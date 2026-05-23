@@ -6,8 +6,15 @@ import {
   GetFactProviders,
   OpenFactProviderFolder,
   SetReadPlan,
+  SetEmulatorClient,
 } from "../wailsjs/go/main/App";
 import { EventsOn } from "../wailsjs/runtime";
+
+enum EmulatorClient {
+  RetroArch = "retroarch",
+  NWA = "nwa",
+  QUSB2SNES = "qusb2snes",
+}
 
 enum ConnectionStatus {
   Disconnected = 0,
@@ -38,6 +45,9 @@ function App() {
       connection_status: ConnectionStatus.Disconnected,
       message: "Opensplit Not Found",
     });
+  const [selectedClient, setSelectedClient] = useState<EmulatorClient>(
+    EmulatorClient.RetroArch,
+  );
 
   useEffect(() => {
     return EventsOn("emulator:connection", (s: ConnectionState) => {
@@ -88,6 +98,20 @@ function App() {
 
   return (
     <div style={{ padding: 20 }} id="App">
+      <div style={{ marginTop: "10px" }}>
+        <select
+          value={selectedClient}
+          onChange={async (e) => {
+            const client = e.target.value as EmulatorClient;
+            setSelectedClient(client);
+            await SetEmulatorClient(client);
+          }}
+        >
+          <option value={EmulatorClient.RetroArch}>RetroArch</option>
+          <option value={EmulatorClient.NWA}>NWA</option>
+          <option value={EmulatorClient.QUSB2SNES}>QUSB2SNES</option>
+        </select>
+      </div>
       <div>
         <select onChange={changeProvider}>
           <option value="">Select a Fact Provider</option>
