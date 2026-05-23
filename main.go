@@ -1,6 +1,8 @@
 package main
 
 import (
+	"FactFinder/emulator/nwa"
+	"FactFinder/emulator/qusb2snes"
 	"FactFinder/emulator/retroarch"
 	"FactFinder/processing"
 	"FactFinder/repo"
@@ -26,9 +28,18 @@ func main() {
 	}
 
 	raClient := retroarch.NewClient("localhost", "55355")
+	nwaClient := nwa.NewClient("localhost", "48879")
+	qUSB2SNESClient := qusb2snes.NewClient("localhost", "23074")
 	engine, osConnCh := processing.NewEngine()
 
-	app := NewApp(providerFolder, raClient, engine, osConnCh)
+	app := NewApp(
+		providerFolder,
+		raClient,
+		nwaClient,
+		qUSB2SNESClient,
+		engine,
+		osConnCh,
+	)
 
 	// Create application with options
 	err = wails.Run(&options.App{
