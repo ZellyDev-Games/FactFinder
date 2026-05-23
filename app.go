@@ -2,6 +2,9 @@ package main
 
 import (
 	"FactFinder/emulator"
+	"FactFinder/emulator/nwa"
+	"FactFinder/emulator/qusb2snes"
+	"FactFinder/emulator/retroarch"
 	"FactFinder/processing"
 	"FactFinder/repo"
 	"context"
@@ -31,20 +34,67 @@ type App struct {
 	state            [][]string
 	values           []emulator.Value
 	osConnectionCh   chan bool
+
+	retroarch *retroarch.Client
+	nwa       *nwa.Client
+	qusb2snes *qusb2snes.Client
+
+	emulatorCancel context.CancelFunc
 }
 
 // NewApp creates a new App application struct
-func NewApp(factFinderFolder string,
-	memoryReader emulator.MemoryReader,
+func NewApp(
+	factFinderFolder string,
+	retroarchClient *retroarch.Client,
+	nwaClient *nwa.Client,
+	qusb2snesClient *qusb2snes.Client,
 	processingEngine *processing.Engine,
-	osConnectionCh chan bool) *App {
+	osConnectionCh chan bool,
+) *App {
 
 	return &App{
 		factFinderFolder: factFinderFolder,
-		memoryReader:     memoryReader,
+		retroarch:        retroarchClient,
+		nwa:              nwaClient,
+		qusb2snes:        qusb2snesClient,
+
+		// default client
+		memoryReader: retroarchClient,
+
 		processingEngine: processingEngine,
 		osConnectionCh:   osConnectionCh,
 	}
+}
+
+func (a *App) SetEmulatorClient(client string) error {
+	switch client {
+	case "retroarch":
+		a.memoryReader = a.retroarch
+
+	case "nwa":
+		a.memoryReader = a.nwa
+
+	case "qusb2snes":
+		a.memoryReader = a.qusb2snes
+
+	default:
+		return fmt.Errorf("unknown emulator client: %s", client)
+	}
+
+	// stop existing loop
+	if a.emulatorCancel != nil {
+		a.emulatorCancel()
+	}
+
+	// restart loop
+	go func() {
+		err := a.StartEmulatorClient()
+		if err != nil {
+			fmt.Println(err)
+		}
+	}()
+
+	return nil
 }
 
 // startup is called when the app starts. The context is saved
@@ -144,6 +194,9 @@ func (a *App) sendValues() {
 }
 
 func (a *App) StartEmulatorClient() error {
+	ctx, cancel := context.WithCancel(context.Background())
+	a.emulatorCancel = cancel
+
 	connectionStatus := ConnectionState{
 		ConnectionStatus: emulator.Disconnected,
 		Message:          "Looking for Emulator",
@@ -182,61 +235,68 @@ func (a *App) StartEmulatorClient() error {
 			break
 		}
 
+		compliedReadPlan := a.memoryReader.CompileReadPlan(a.readPlan)
 		interval := time.Duration(a.readPlan.ReadInterval) * time.Millisecond
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-		for range ticker.C {
-			// If we're not connected inform the UI that we are reconnecting, try to reconnect,
-			// if we fail sleep for a second and try again
-			if a.memoryReader.EmulatorConnected() != emulator.Connected {
-				connectionStatus.ConnectionStatus = emulator.Reconnecting
-				connectionStatus.Message = "Reconnecting to emulator..."
+		for {
+			select {
+			case <-ctx.Done():
+				return
 
-				runtime.EventsEmit(a.ctx, "emulator:connection", connectionStatus)
-				fmt.Println("emulator is not connected, attempting reconnect")
-				if status := a.memoryReader.ConnectEmulator(); status != emulator.Connected {
-					fmt.Println("failed to reconnect to emulator")
-					time.Sleep(1 * time.Second)
-					continue
-				}
-
-				// we've successfully reconnected, inform the UI and move along
-				fmt.Println("reconnected to emulator")
-			}
-
-			// With a clean connection, and a loaded read plan, we can now try to get values
-			values, err := a.memoryReader.GetValues(a.readPlan)
-			if err != nil {
-				// The emulator is connected, but a game is not loaded
-				//(e.g. RetroArch will return -1 on READ_CORE_MEMORY if it's running, but no game is loaded)
-				// Inform the UI that we are waiting on something.
-				if errors.Is(err, emulator.ErrGameNotLoaded) {
-					connectionStatus.ConnectionStatus = emulator.WaitingForGame
-					connectionStatus.Message = "Game not loaded"
+			case <-ticker.C:
+				// If we're not connected inform the UI that we are reconnecting, try to reconnect,
+				// if we fail sleep for a second and try again
+				if a.memoryReader.EmulatorConnected() != emulator.Connected {
+					connectionStatus.ConnectionStatus = emulator.Reconnecting
+					connectionStatus.Message = "Reconnecting to emulator..."
 
 					runtime.EventsEmit(a.ctx, "emulator:connection", connectionStatus)
+					fmt.Println("emulator is not connected, attempting reconnect")
+					if status := a.memoryReader.ConnectEmulator(); status != emulator.Connected {
+						fmt.Println("failed to reconnect to emulator")
+						time.Sleep(1 * time.Second)
+						continue
+					}
+
+					// we've successfully reconnected, inform the UI and move along
+					fmt.Println("reconnected to emulator")
+				}
+
+				// With a clean connection, and a loaded read plan, we can now try to get values
+				values, err := a.memoryReader.GetValues(compliedReadPlan)
+				if err != nil {
+					// The emulator is connected, but a game is not loaded
+					//(e.g. RetroArch will return -1 on READ_CORE_MEMORY if it's running, but no game is loaded)
+					// Inform the UI that we are waiting on something.
+					if errors.Is(err, emulator.ErrGameNotLoaded) {
+						connectionStatus.ConnectionStatus = emulator.WaitingForGame
+						connectionStatus.Message = "Game not loaded"
+
+						runtime.EventsEmit(a.ctx, "emulator:connection", connectionStatus)
+						continue
+					}
+
+					// Otherwise dump the error to log and continue
+					fmt.Println("lua error", err)
 					continue
 				}
 
-				// Otherwise dump the error to log and continue
-				fmt.Println("lua error", err)
-				continue
+				connectionStatus.ConnectionStatus = emulator.Connected
+				connectionStatus.Message = "Emulator connected"
+				runtime.EventsEmit(a.ctx, "emulator:connection", connectionStatus)
+
+				err = a.processingEngine.ProcessValues(values)
+				if err != nil {
+					fmt.Println(err)
+					continue
+				}
+
+				a.state = a.processingEngine.GetState()
+				a.values = values
+				a.sendState()
+				a.sendValues()
 			}
-
-			connectionStatus.ConnectionStatus = emulator.Connected
-			connectionStatus.Message = "Emulator connected"
-			runtime.EventsEmit(a.ctx, "emulator:connection", connectionStatus)
-
-			err = a.processingEngine.ProcessValues(values)
-			if err != nil {
-				fmt.Println(err)
-				continue
-			}
-
-			a.state = a.processingEngine.GetState()
-			a.values = values
-			a.sendState()
-			a.sendValues()
 		}
 	}()
 
