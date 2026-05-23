@@ -1,0 +1,3 @@
+Fix Retroarch to work with other READ_CORE_MEMORY supported cores
+Get NWA client working
+Get QUSB client working
