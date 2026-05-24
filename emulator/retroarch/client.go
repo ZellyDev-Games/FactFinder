@@ -188,6 +188,24 @@ func resolveAddress(plan *emulator.ReadPlan, spec emulator.ReadSpec) int {
 		return 0x700000 +
 			(int(spec.Address) % 0x8000) +
 			(int(spec.Address)/0x8000)*0x10000
+	case emulator.RAM:
+		// RAM   Bank = "ram"   // PSX/NES/Genesis Memory
+		return int(spec.Address)
+	case emulator.IWRAM:
+		// IWRAM Bank = "iwram" // GBA Internal Memory
+		return int(spec.Address)
+	case emulator.EWRAM:
+		// EWRAM Bank = "ewram" // GBA External Memory
+		return int(spec.Address)
+	case emulator.FCRAM:
+		// FCRAM Bank = "fcram" // 3DS Memory
+		return int(spec.Address)
+	case emulator.PSRAM:
+		// PSRAM Bank = "psram" // DS Memory
+		return int(spec.Address)
+	case emulator.RDRAM:
+		// RDRAM Bank = "rdram" // N64 Memory
+		return int(spec.Address)
 	}
 
 	return 0
