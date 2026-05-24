@@ -41,6 +41,35 @@ const (
 	RDRAM Bank = "rdram" // N64 Memory
 )
 
+func (b *Bank) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.ScalarNode {
+		return fmt.Errorf("expected scalar for bank")
+	}
+
+	switch strings.ToLower(strings.TrimSpace(value.Value)) {
+	case "wram":
+		*b = WRAM
+	case "sram":
+		*b = SRAM
+	case "ram":
+		*b = RAM
+	case "iwram":
+		*b = IWRAM
+	case "ewram":
+		*b = EWRAM
+	case "fcram":
+		*b = FCRAM
+	case "psram":
+		*b = PSRAM
+	case "rdram":
+		*b = RDRAM
+	default:
+		return fmt.Errorf("unknown bank: %q", value.Value)
+	}
+
+	return nil
+}
+
 type HexInt int
 
 func (h *HexInt) UnmarshalYAML(value *yaml.Node) error {
@@ -119,7 +148,28 @@ func NewReadPlan(reader io.Reader) (*ReadPlan, error) {
 
 	for i := range rp.Watches {
 		if rp.Watches[i].Bank == "" {
-			rp.Watches[i].Bank = WRAM
+			switch rp.Platform {
+			case "SNES":
+				rp.Watches[i].Bank = WRAM
+			case "GB":
+				rp.Watches[i].Bank = WRAM
+			case "GBC":
+				rp.Watches[i].Bank = WRAM
+			case "PSX":
+				rp.Watches[i].Bank = RAM
+			case "NES":
+				rp.Watches[i].Bank = RAM
+			case "Genesis":
+				rp.Watches[i].Bank = RAM
+			case "GBA":
+				rp.Watches[i].Bank = IWRAM
+			case "3DS":
+				rp.Watches[i].Bank = FCRAM
+			case "DS":
+				rp.Watches[i].Bank = PSRAM
+			case "N64":
+				rp.Watches[i].Bank = RDRAM
+			}
 		}
 	}
 
