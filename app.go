@@ -159,6 +159,7 @@ func (a *App) SetReadPlan(path string) error {
 	luaFile := filepath.Join(path, "factbuilder.lua")
 	err = a.processingEngine.LoadFile(luaFile, a.readPlan)
 	if err != nil {
+		fmt.Println(err)
 		return err
 	}
 
