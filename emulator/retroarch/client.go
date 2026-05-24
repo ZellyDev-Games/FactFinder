@@ -13,6 +13,11 @@ import (
 )
 
 const wramOffset = 0x7e0000
+const iwramOffset = 0x19000
+const ewramOffset = 0x21000
+const fcramOffset = 0x20000000
+const psramOffset = 0x02000000
+const psxRAMOffset = 0x010000
 
 const maxGap = 16
 const maxReadSize = 4096
@@ -175,7 +180,11 @@ func (c *Client) CompileReadPlan(plan *emulator.ReadPlan) *emulator.CompiledRead
 func resolveAddress(plan *emulator.ReadPlan, spec emulator.ReadSpec) int {
 	switch spec.Bank {
 	case emulator.WRAM:
-		return int(spec.Address) + wramOffset
+		if plan.Platform == "SNES" {
+			return int(spec.Address) + wramOffset
+		}
+		// GB & GBC 0xC000-0xDFFF
+		return int(spec.Address)
 
 	case emulator.SRAM:
 		if plan.HiROM {
@@ -188,23 +197,42 @@ func resolveAddress(plan *emulator.ReadPlan, spec emulator.ReadSpec) int {
 		return 0x700000 +
 			(int(spec.Address) % 0x8000) +
 			(int(spec.Address)/0x8000)*0x10000
+
 	case emulator.RAM:
 		// RAM   Bank = "ram"   // PSX/NES/Genesis Memory
-		return int(spec.Address)
+		// NES 0x0000-0x07FF
+		// Genesis 0xFF0000-0xFFFFFF
+		if plan.Platform != "PSX" {
+			return int(spec.Address)
+		}
+		// PSX 0x010000-0x200000
+		return int(spec.Address) + psxRAMOffset
+
 	case emulator.IWRAM:
 		// IWRAM Bank = "iwram" // GBA Internal Memory
-		return int(spec.Address)
+		// GBA 0x19000 – 0x20FFF
+		return int(spec.Address) + iwramOffset
+
 	case emulator.EWRAM:
 		// EWRAM Bank = "ewram" // GBA External Memory
-		return int(spec.Address)
+		// GBA 0x21000 – 0x60FFF
+		return int(spec.Address) + ewramOffset
+
 	case emulator.FCRAM:
 		// FCRAM Bank = "fcram" // 3DS Memory
-		return int(spec.Address)
+		// 3DS 0x20000000-0x28000000
+		return int(spec.Address) + fcramOffset
+
 	case emulator.PSRAM:
 		// PSRAM Bank = "psram" // DS Memory
-		return int(spec.Address)
+		// DeSmuME 0x02000000-0x02400000
+		// MelonDS 0x00000000-0x00400000
+		return int(spec.Address) + psramOffset
+
 	case emulator.RDRAM:
 		// RDRAM Bank = "rdram" // N64 Memory
+		// 0x00000000 – 0x003FFFFF No expansion pack
+		// 0x00000000 – 0x007FFFFF With expansion pack
 		return int(spec.Address)
 	}
 
