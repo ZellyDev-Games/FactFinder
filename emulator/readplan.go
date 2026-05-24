@@ -117,9 +117,9 @@ func NewReadPlan(reader io.Reader) (*ReadPlan, error) {
 		return nil, err
 	}
 
-	for _, watch := range rp.Watches {
-		if watch.Bank == "" {
-			watch.Bank = WRAM
+	for i := range rp.Watches {
+		if rp.Watches[i].Bank == "" {
+			rp.Watches[i].Bank = WRAM
 		}
 	}
 
