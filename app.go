@@ -236,7 +236,6 @@ func (a *App) StartEmulatorClient() error {
 			break
 		}
 
-		compliedReadPlan := a.memoryReader.CompileReadPlan(a.readPlan)
 		interval := time.Duration(a.readPlan.ReadInterval) * time.Millisecond
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -264,6 +263,7 @@ func (a *App) StartEmulatorClient() error {
 					fmt.Println("reconnected to emulator")
 				}
 
+				compliedReadPlan := a.memoryReader.CompileReadPlan(a.readPlan)
 				// With a clean connection, and a loaded read plan, we can now try to get values
 				values, err := a.memoryReader.GetValues(compliedReadPlan)
 				if err != nil {
