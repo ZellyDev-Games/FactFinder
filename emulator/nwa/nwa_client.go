@@ -17,6 +17,13 @@ import (
 	"time"
 )
 
+const wramOffset = 0x7e0000
+const iwramOffset = 0x19000
+const ewramOffset = 0x21000
+const fcramOffset = 0x20000000
+const psramOffset = 0x02000000
+const psxRAMOffset = 0x010000
+
 const maxGap = 16
 const maxReadSize = 4096
 
@@ -59,24 +66,19 @@ func (c *Client) ConnectEmulator() emulator.ConnectionStatus {
 	c.conn = conn
 
 	for {
-		_, err = c.conn.Write([]byte("VERSION"))
+		summary, err := c.EmuInfo()
 		if err != nil {
 			fmt.Println(err)
 			continue
 		}
 
-		_ = c.conn.SetReadDeadline(time.Now().Add(time.Second * 1))
-		n, err := c.conn.Read(c.respBuf)
-		if err != nil {
-			fmt.Println(err)
-			continue
-		}
-
-		if n > 0 {
+		if summary != nil {
 			_ = c.conn.SetReadDeadline(time.Time{})
 			break
 		}
 	}
+	fmt.Println("Connected to emulator")
+	c.CoreMemories()
 
 	c.emulatorConnected = emulator.Connected
 	return emulator.Connected
@@ -281,15 +283,17 @@ func (c *Client) ClientID() {
 	fmt.Printf("%#v\n", summary)
 }
 
-func (c *Client) EmuInfo() {
+func (c *Client) EmuInfo() (EmulatorReply, error) {
 	cmd := "EMULATOR_INFO"
 	args := "0"
 	summary, err := c.ExecuteCommand(cmd, &args)
 	if err != nil {
 		println(err)
+		return nil, err
 		// panic(err)
 	}
 	fmt.Printf("%#v\n", summary)
+	return summary, nil
 }
 
 func (c *Client) EmuGameInfo() {
@@ -371,7 +375,7 @@ func (c *Client) CompileReadPlan(plan *emulator.ReadPlan) *emulator.CompiledRead
 	tmp := make([]tempWatch, 0, len(plan.Watches))
 
 	for _, spec := range plan.Watches {
-		addr := resolveAddress( /*plan,*/ spec)
+		addr := resolveAddress(plan, spec)
 
 		size := spec.SizeOverride
 		if size == 0 {
@@ -438,42 +442,63 @@ func (c *Client) CompileReadPlan(plan *emulator.ReadPlan) *emulator.CompiledRead
 	return out
 }
 
-func resolveAddress( /*plan *emulator.ReadPlan,*/ spec emulator.ReadSpec) int {
+func resolveAddress(plan *emulator.ReadPlan, spec emulator.ReadSpec) int {
 	switch spec.Bank {
 	case emulator.WRAM:
-		// WRAM  Bank = "wram"  // SNES/GB/GBC Memory
+		if plan.Platform == "SNES" {
+			return int(spec.Address) + wramOffset
+		}
+		// GB & GBC 0xC000-0xDFFF
 		return int(spec.Address)
 
 	case emulator.SRAM:
-		// SRAM  Bank = "sram"  // SNES Save Memory
-		// if plan.HiROM {
-		// return 0x300000 +
-		// 0x6000 +
-		// (int(spec.Address) % 0xA000) +
-		// (int(spec.Address)/0xA000)*0x10000
-		// }
-		//
-		// return 0x700000 +
-		// (int(spec.Address) % 0x8000) +
-		// (int(spec.Address)/0x8000)*0x10000
-		return int(spec.Address)
+		if plan.HiROM {
+			return 0x300000 +
+				0x6000 +
+				(int(spec.Address) % 0xA000) +
+				(int(spec.Address)/0xA000)*0x10000
+		}
+
+		return 0x700000 +
+			(int(spec.Address) % 0x8000) +
+			(int(spec.Address)/0x8000)*0x10000
+
 	case emulator.RAM:
 		// RAM   Bank = "ram"   // PSX/NES/Genesis Memory
-		return int(spec.Address)
+		// NES 0x0000-0x07FF
+		// Genesis 0xFF0000-0xFFFFFF
+		if plan.Platform != "PSX" {
+			// fmt.Printf("%v %v\n", spec.Address, int(spec.Address))
+			return int(spec.Address)
+		}
+		// PSX 0x010000-0x200000
+		return int(spec.Address) + psxRAMOffset
+
 	case emulator.IWRAM:
 		// IWRAM Bank = "iwram" // GBA Internal Memory
-		return int(spec.Address)
+		// GBA 0x19000 – 0x20FFF
+		return int(spec.Address) + iwramOffset
+
 	case emulator.EWRAM:
 		// EWRAM Bank = "ewram" // GBA External Memory
-		return int(spec.Address)
+		// GBA 0x21000 – 0x60FFF
+		return int(spec.Address) + ewramOffset
+
 	case emulator.FCRAM:
 		// FCRAM Bank = "fcram" // 3DS Memory
-		return int(spec.Address)
+		// 3DS 0x20000000-0x28000000
+		return int(spec.Address) + fcramOffset
+
 	case emulator.PSRAM:
 		// PSRAM Bank = "psram" // DS Memory
-		return int(spec.Address)
+		// DeSmuME 0x02000000-0x02400000
+		// MelonDS 0x00000000-0x00400000
+		return int(spec.Address) + psramOffset
+
 	case emulator.RDRAM:
 		// RDRAM Bank = "rdram" // N64 Memory
+		// 0x00000000 – 0x003FFFFF No expansion pack
+		// 0x00000000 – 0x007FFFFF With expansion pack
 		return int(spec.Address)
 	}
 
@@ -484,26 +509,10 @@ func (c *Client) GetValues(plan *emulator.CompiledReadPlan) ([]emulator.Value, e
 	vals := make([]emulator.Value, 0)
 
 	cmd := "CORE_READ"
-	// var domain string
-	// var requestString string
-
-	// for _, watcher := range c.nwaMemory {
-	// requestString += ";" + watcher.address + ";" + watcher.size
-	// }
-
-	// args := domain + requestString
-	// 	I8        ValueType = "I8"
-	// 	I16       ValueType = "I16"
-	// 	I32       ValueType = "I32"
-	// 	I64       ValueType = "I64"
-	// 	U8        ValueType = "U8"
-	// 	U16       ValueType = "U16"
-	// 	U32       ValueType = "U32"
-	// 	U64       ValueType = "U64"
-	// 	Bool      ValueType = "Bool"
-	// 	FlagCount           = "FlagCount"
 	for _, region := range plan.Regions {
-		args := string(region.Bank) + ";" + strconv.Itoa(region.Start) + ";" + strconv.Itoa(region.Size)
+		args := string("RAM") + ";$" + strconv.Itoa(region.Start) + ";" + strconv.Itoa(region.Size)
+
+		fmt.Printf("%v\n", args)
 
 		summary, err := c.ExecuteCommand(cmd, &args)
 		if err != nil {
@@ -541,46 +550,7 @@ func (c *Client) GetValues(plan *emulator.CompiledReadPlan) ([]emulator.Value, e
 			vals = append(vals, *val)
 		}
 	}
-	// if err != nil {
-	// 	return Summary{}, err
-	// }
-	// fmt.Printf("%#v\n", summary)
 
-	// switch v := summary.(type) {
-	// case []byte:
-	// 	// update memoryWatcher with data
-	// 	runningTotal := 0
-	// 	for _, watcher := range b.nwaMemory {
-	// 		size, _ := strconv.Atoi(watcher.size)
-	// 		switch size {
-	// 		case 1:
-	// 			*watcher.currentValue = int(v[runningTotal])
-	// 			runningTotal += size
-	// 		case 2:
-	// 			*watcher.currentValue = int(binary.LittleEndian.Uint16(v[runningTotal : runningTotal+size]))
-	// 			runningTotal += size
-	// 		case 3:
-	// 			fallthrough
-	// 		case 4:
-	// 			*watcher.currentValue = int(binary.LittleEndian.Uint32(v[runningTotal : runningTotal+size]))
-	// 			runningTotal += size
-	// 		case 5:
-	// 			fallthrough
-	// 		case 6:
-	// 			fallthrough
-	// 		case 7:
-	// 			fallthrough
-	// 		case 8:
-	// 			*watcher.currentValue = int(binary.LittleEndian.Uint64(v[runningTotal : runningTotal+size]))
-	// 			runningTotal += size
-	// 		}
-	// 	}
-
-	// case Error:
-	// 	fmt.Printf("%#v\n", v)
-	// default:
-	// 	fmt.Printf("%#v\n", v)
-	// }
 	return vals, nil
 }
 
