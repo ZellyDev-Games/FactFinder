@@ -151,7 +151,7 @@ func (e *Engine) LoadFile(path string, plan *emulator.ReadPlan) error {
 	}))
 
 	if err := e.L.DoFile(path); err != nil {
-		return err
+		return fmt.Errorf("lua load error: %w", err)
 	}
 
 	fn := e.L.GetGlobal("onTick")
