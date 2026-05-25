@@ -44,11 +44,7 @@ type Client struct {
 }
 
 func NewClient(ip, port string) *Client {
-	// address := fmt.Sprintf("%s:%s", ip, port)
 	tcpAddr, _ := net.ResolveTCPAddr("tcp", ip+":"+port)
-	// if err != nil {
-	// return nil, fmt.Errorf("can't resolve address: %w", err)
-	// }
 
 	return &Client{
 		addr:    tcpAddr,
@@ -102,41 +98,6 @@ func (c *Client) ExecuteCommand(cmd string, argString *string) (EmulatorReply, e
 
 	return c.getReply()
 }
-
-// func (c *Client) ExecuteRawCommand(cmd string, argString *string) {
-// 	var command string
-// 	_ = c.conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-// 	if argString == nil {
-// 		command = fmt.Sprintf("%s\n", cmd)
-// 	} else {
-// 		command = fmt.Sprintf("%s %s\n", cmd, *argString)
-// 	}
-
-// 	// ignoring error as per TODO in Rust code
-// 	_, _ = io.WriteString(c.conn, command)
-// }
-
-// func (c *SyncClient) IsConnected() bool {
-// 	// net.Conn in Go does not have a Peek method.
-// 	// We can try to set a read deadline and read with a zero-length buffer to check connection.
-// 	// But zero-length read returns immediately, so we try to read 1 byte with deadline.
-// 	buf := make([]byte, 1)
-// 	_ = c.Connection.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
-// 	n, err := c.Connection.Read(buf)
-// 	if err != nil {
-// 		// If timeout or no data, consider connected
-// 		netErr, ok := err.(net.Error)
-// 		if ok && netErr.Timeout() {
-// 			return true
-// 		}
-// 		return false
-// 	}
-// 	if n > 0 {
-// 		// Data was read, connection is alive
-// 		return true
-// 	}
-// 	return false
-// }
 
 func (c *Client) Close() error {
 	c.emulatorConnected = emulator.Disconnected
@@ -468,7 +429,6 @@ func resolveAddress(plan *emulator.ReadPlan, spec emulator.ReadSpec) int {
 		// NES 0x0000-0x07FF
 		// Genesis 0xFF0000-0xFFFFFF
 		if plan.Platform != "PSX" {
-			// fmt.Printf("%v %v\n", spec.Address, int(spec.Address))
 			return int(spec.Address)
 		}
 		// PSX 0x010000-0x200000
@@ -512,8 +472,6 @@ func (c *Client) GetValues(plan *emulator.CompiledReadPlan) ([]emulator.Value, e
 	for _, region := range plan.Regions {
 		args := string("RAM") + ";$" + strconv.Itoa(region.Start) + ";" + strconv.Itoa(region.Size)
 
-		fmt.Printf("%v\n", args)
-
 		summary, err := c.ExecuteCommand(cmd, &args)
 		if err != nil {
 			return nil, err
@@ -532,11 +490,7 @@ func (c *Client) GetValues(plan *emulator.CompiledReadPlan) ([]emulator.Value, e
 			)
 		}
 
-		// Store merged region buffer
-		// copy(region.Buffer, data[:region.Size])
-
 		for _, watch := range region.Watches {
-			// raw := region.Buffer[watch.Offset : watch.Offset+watch.Size]
 			raw := data[watch.Offset : watch.Offset+watch.Size]
 
 			val := decodeValue(watch.Spec, raw)
