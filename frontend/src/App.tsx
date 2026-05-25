@@ -34,21 +34,21 @@ function App() {
   const [emulatorValues, setEmulatorValues] = useState<Array<Array<string>>>(
     [],
   );
-  
+
   const [emulatorConnection, setEmulatorConnection] = useState<ConnectionState>(
     {
       connection_status: ConnectionStatus.Disconnected,
       message: "Emulator Not Found",
     },
   );
-  
+
   const [openSplitConnection, setOpenSplitConnection] =
     useState<ConnectionState>({
       connection_status: ConnectionStatus.Disconnected,
       message: "Opensplit Not Found",
     }
-  );
-  
+    );
+
   const [selectedClient, setSelectedClient] = useState<EmulatorClient>(
     EmulatorClient.RetroArch,
   );
@@ -101,8 +101,8 @@ function App() {
   };
 
   return (
-    <div style={{ padding: 20 }} id="App">
-      <div style={{ marginTop: "10px" }}>
+    <div id="App">
+      <div style={{ marginTop: "10px", marginBottom: "10px" }}>
         <select
           value={selectedClient}
           onChange={async (e) => {
