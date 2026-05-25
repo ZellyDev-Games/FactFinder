@@ -20,13 +20,6 @@ const sramBase = 0xE00000
 const maxGap = 16
 const maxReadSize = 4096
 
-// type MessageReaderWriter interface {
-// 	WriteMessage(data []byte) error
-// 	ReadMessage() (p []byte, err error)
-// 	Connect()
-// 	Connected() bool
-// }
-
 type Command int
 
 const (
