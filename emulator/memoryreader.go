@@ -14,7 +14,7 @@ const (
 	U32       ValueType = "U32"
 	U64       ValueType = "U64"
 	Bool      ValueType = "Bool"
-	FlagCount           = "FlagCount"
+	FlagCount ValueType = "FlagCount"
 )
 
 type ConnectionStatus byte
@@ -37,10 +37,22 @@ type Value struct {
 	FlagCount int
 }
 
-type MemoryReader interface {
+type Connector interface {
 	ConnectEmulator() ConnectionStatus
 	EmulatorConnected() ConnectionStatus
 	GameConnected() bool
+}
+
+type Reader interface {
 	GetValues(*CompiledReadPlan) ([]Value, error)
+}
+
+type Planner interface {
 	CompileReadPlan(plan *ReadPlan) *CompiledReadPlan
+}
+
+type MemoryReader interface {
+	Connector
+	Reader
+	Planner
 }
