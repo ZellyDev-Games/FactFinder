@@ -48,16 +48,16 @@ func parseHexByteToken(buf []byte, i int) (byte, int, error) {
 		i++
 	}
 	if i+2 > len(buf) {
-		return 0, i, fmt.Errorf("truncated hex token")
+		return 0, i, fmt.Errorf("truncated hex token at offset %d", i)
 	}
 
 	hi, ok := fromHexNibble(buf[i])
 	if !ok {
-		return 0, i, fmt.Errorf("invalid hex char %q", buf[i])
+		return 0, i, fmt.Errorf("invalid hex char %q at offset %d", buf[i], i)
 	}
 	lo, ok := fromHexNibble(buf[i+1])
 	if !ok {
-		return 0, i, fmt.Errorf("invalid hex char %q", buf[i+1])
+		return 0, i, fmt.Errorf("invalid hex char %q at offset %d", buf[i+1], i+1)
 	}
 	v := (hi << 4) | lo
 	i += 2
@@ -78,6 +78,9 @@ func parseHexByteToken(buf []byte, i int) (byte, int, error) {
 // It skips the first 2 fields and decodes `want` hex byte tokens into dst.
 // dst must have length >= want.
 func decodeRetroArchReadCoreMemoryBytes(resp []byte, dst []byte, want int) error {
+	if len(resp) == 0 {
+		return fmt.Errorf("empty READ_CORE_MEMORY response")
+	}
 	// Skip "READ_CORE_MEMORY"
 	i := 0
 	i = skipField(resp, i)
@@ -91,7 +94,7 @@ func decodeRetroArchReadCoreMemoryBytes(resp []byte, dst []byte, want int) error
 	for j := 0; j < want; j++ {
 		b, ni, err := parseHexByteToken(resp, i)
 		if err != nil {
-			return err
+			return fmt.Errorf("decode byte %d: %w", j, err)
 		}
 		dst[j] = b
 		i = ni

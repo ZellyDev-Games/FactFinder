@@ -5,6 +5,7 @@ import (
 	"FactFinder/emulator/nwa"
 	"FactFinder/emulator/qusb2snes"
 	"FactFinder/emulator/retroarch"
+	"FactFinder/logger"
 	"FactFinder/processing"
 	"FactFinder/repo"
 	"context"
@@ -17,6 +18,8 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
+
+var log = logger.Module("app").SetLevel(logger.ErrorLevel)
 
 type ConnectionState struct {
 	ConnectionStatus emulator.ConnectionStatus `json:"connection_status"`
@@ -90,9 +93,11 @@ func (a *App) SetEmulatorClient(client string) error {
 	go func() {
 		err := a.StartEmulatorClient()
 		if err != nil {
-			fmt.Println(err)
+			log.Error("failed to start emulator client: %v", err)
 		}
 	}()
+
+	log.Info("switched emulator client to %s", client)
 
 	return nil
 }
@@ -123,7 +128,7 @@ func (a *App) startup(ctx context.Context) {
 	go func() {
 		err := a.StartEmulatorClient()
 		if err != nil {
-			fmt.Println(err)
+			log.Error("failed to start emulator client: %v", err)
 			return
 		}
 	}()
@@ -151,6 +156,8 @@ func (a *App) SetReadPlan(path string) error {
 		_ = f.Close()
 	}(f)
 
+	log.Info("loaded read plan from %s", path)
+
 	a.readPlan, err = emulator.NewReadPlan(f)
 	if err != nil {
 		return err
@@ -158,10 +165,13 @@ func (a *App) SetReadPlan(path string) error {
 
 	luaFile := filepath.Join(path, "factbuilder.lua")
 	err = a.processingEngine.LoadFile(luaFile, a.readPlan)
+
 	if err != nil {
-		fmt.Println(err)
+		log.Error("failed to load lua file: %v", err)
 		return err
 	}
+
+	log.Info("loaded lua factbuilder: %s", luaFile)
 
 	return nil
 }
@@ -208,10 +218,10 @@ func (a *App) StartEmulatorClient() error {
 	}
 
 	// Connect to emulator
-	fmt.Println("starting memory reader")
+	log.Info("starting memory reader")
 	for {
 		if status := a.memoryReader.ConnectEmulator(); status != emulator.Connected {
-			fmt.Println("retying emulator connection")
+			log.Warn("retrying emulator connection")
 			time.Sleep(1 * time.Second)
 			continue
 		}
@@ -219,7 +229,7 @@ func (a *App) StartEmulatorClient() error {
 		break
 	}
 
-	fmt.Println("emulator initial connect")
+	log.Info("emulator connected")
 
 	go func() {
 		for {
@@ -252,20 +262,23 @@ func (a *App) StartEmulatorClient() error {
 					connectionStatus.Message = "Reconnecting to emulator..."
 
 					runtime.EventsEmit(a.ctx, "emulator:connection", connectionStatus)
-					fmt.Println("emulator is not connected, attempting reconnect")
+					log.Warn("emulator disconnected, attempting reconnect")
 					if status := a.memoryReader.ConnectEmulator(); status != emulator.Connected {
-						fmt.Println("failed to reconnect to emulator")
+						log.Error("failed to reconnect to emulator")
 						time.Sleep(1 * time.Second)
 						continue
 					}
 
 					// we've successfully reconnected, inform the UI and move along
-					fmt.Println("reconnected to emulator")
+					log.Info("reconnected to emulator")
 				}
 
 				compliedReadPlan := a.memoryReader.CompileReadPlan(a.readPlan)
+
 				// With a clean connection, and a loaded read plan, we can now try to get values
 				values, err := a.memoryReader.GetValues(compliedReadPlan)
+				log.Debug("processing %d values", len(values))
+
 				if err != nil {
 					// The emulator is connected, but a game is not loaded
 					//(e.g. RetroArch will return -1 on READ_CORE_MEMORY if it's running, but no game is loaded)
@@ -279,7 +292,7 @@ func (a *App) StartEmulatorClient() error {
 					}
 
 					// Otherwise dump the error to log and continue
-					fmt.Println("lua error", err)
+					log.Error("failed to get values: %v", err)
 					continue
 				}
 
@@ -289,7 +302,7 @@ func (a *App) StartEmulatorClient() error {
 
 				err = a.processingEngine.ProcessValues(values)
 				if err != nil {
-					fmt.Println(err)
+					log.Error("processing engine error: %v", err)
 					continue
 				}
 

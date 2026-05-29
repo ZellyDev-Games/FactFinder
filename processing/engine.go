@@ -2,6 +2,7 @@ package processing
 
 import (
 	"FactFinder/emulator"
+	"FactFinder/logger"
 	"fmt"
 	"net"
 	"sort"
@@ -10,6 +11,8 @@ import (
 
 	lua "github.com/yuin/gopher-lua"
 )
+
+var log = logger.Module("processing/engine").SetLevel(logger.ErrorLevel)
 
 type Command byte
 
@@ -67,15 +70,18 @@ func NewEngine() (*Engine, chan bool) {
 		defer ticker.Stop()
 
 		for range ticker.C {
+			log.Debug("OpenSplit heartbeat check")
 			e.openSplitConnected = e.Hello()
 			e.updateConnectionStatus(e.openSplitConnected)
 		}
 	}()
 
+	log.Info("engine initialized (OpenSplit UDP on :0)")
 	return e, e.opensplitConnectedCh
 }
 
 func (e *Engine) Close() {
+	log.Info("engine shutting down")
 	if e.L != nil {
 		e.L.Close()
 	}
@@ -110,7 +116,7 @@ func (e *Engine) LoadFile(path string, plan *emulator.ReadPlan) error {
 
 		_, err := e.conn.WriteTo(packet, e.osAddr)
 		if err != nil {
-			fmt.Println(err)
+			log.Error("failed to send %v packet: %v", SPLIT, err)
 			e.updateConnectionStatus(false)
 			return 1
 		}
@@ -127,7 +133,7 @@ func (e *Engine) LoadFile(path string, plan *emulator.ReadPlan) error {
 		_, err := e.conn.WriteTo(packet, e.osAddr)
 		if err != nil {
 			e.updateConnectionStatus(false)
-			fmt.Println(err)
+			log.Error("failed to send reset packet: %v", err)
 			return 1
 		}
 		e.updateConnectionStatus(true)
@@ -143,7 +149,7 @@ func (e *Engine) LoadFile(path string, plan *emulator.ReadPlan) error {
 		_, err := e.conn.WriteTo(packet, e.osAddr)
 		if err != nil {
 			e.updateConnectionStatus(false)
-			fmt.Println(err)
+			log.Error("failed to send pause packet: %v", err)
 			return 1
 		}
 		e.updateConnectionStatus(true)
@@ -156,7 +162,7 @@ func (e *Engine) LoadFile(path string, plan *emulator.ReadPlan) error {
 
 	fn := e.L.GetGlobal("onTick")
 	if fn.Type() != lua.LTFunction {
-		fmt.Println("onTick not present in factfinder.lua")
+		log.Warn("onTick function not found in lua script")
 	} else {
 		e.tickFunc = fn.(*lua.LFunction)
 	}
@@ -184,6 +190,7 @@ func (e *Engine) GetState() [][]string {
 }
 
 func (e *Engine) ProcessValues(values []emulator.Value) error {
+	log.Debug("processing %d emulator values", len(values))
 	for _, newValue := range values {
 		name := newValue.Name
 		t := newValue.Type
@@ -218,19 +225,21 @@ func (e *Engine) ProcessValues(values []emulator.Value) error {
 		Protect: true,
 	})
 	if err != nil {
+		log.Error("lua tick execution failed: %v", err)
 		return err
 	}
 	return nil
 }
 
 func (e *Engine) Hello() bool {
+	log.Debug("sending OpenSplit HELLO")
 	packet := buildRCPacket(HELLO, true)
 
 	e.m.Lock()
 	_, err := e.conn.WriteTo(packet, e.osAddr)
 	if err != nil {
 		e.m.Unlock()
-		fmt.Println(err)
+		log.Debug("OpenSplit HELLO failed: %v", err)
 		return false
 	}
 
@@ -239,7 +248,7 @@ func (e *Engine) Hello() bool {
 	_, _, err = e.conn.ReadFrom(buf)
 	if err != nil || buf[6] != 0 {
 		e.m.Unlock()
-		fmt.Println(err)
+		log.Debug("OpenSplit HELLO response invalid or timed out: %v", err)
 		return false
 	}
 	e.m.Unlock()
@@ -265,6 +274,9 @@ func buildRCPacket(command Command, requestAck bool) []byte {
 
 func (e *Engine) updateConnectionStatus(status bool) {
 	e.openSplitConnected = status
+
+	log.Debug("OpenSplit connection status changed: %v", status)
+
 	select {
 	case e.opensplitConnectedCh <- e.openSplitConnected:
 	default:

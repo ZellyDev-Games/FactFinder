@@ -1,6 +1,7 @@
 package emulator
 
 import (
+	"FactFinder/logger"
 	"fmt"
 	"io"
 	"strconv"
@@ -8,6 +9,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+var log = logger.Module("emulator/readplan").SetLevel(logger.ErrorLevel)
 
 type ResolvedWatch struct {
 	Spec   ReadSpec
@@ -64,6 +67,7 @@ func (b *Bank) UnmarshalYAML(value *yaml.Node) error {
 	case "rdram":
 		*b = RDRAM
 	default:
+		log.Error("unknown bank in yaml: %q", value.Value)
 		return fmt.Errorf("unknown bank: %q", value.Value)
 	}
 
@@ -82,6 +86,7 @@ func (h *HexInt) UnmarshalYAML(value *yaml.Node) error {
 
 	v, err := strconv.ParseInt(s, 16, 0)
 	if err != nil {
+		log.Error("invalid hex value: %q (%v)", value.Value, err)
 		return err
 	}
 
@@ -138,16 +143,28 @@ func NewReadPlan(reader io.Reader) (*ReadPlan, error) {
 	rp := ReadPlan{}
 	rawYaml, err := io.ReadAll(reader)
 	if err != nil {
+		log.Error("failed to read readplan input: %v", err)
 		return nil, err
 	}
 
 	err = yaml.Unmarshal(rawYaml, &rp)
 	if err != nil {
+		log.Error("failed to parse readplan yaml: %v", err)
 		return nil, err
 	}
 
+	log.Info("loaded readplan: %s (%d watches, interval=%dms)",
+		rp.Name,
+		len(rp.Watches),
+		rp.ReadInterval,
+	)
+
 	for i := range rp.Watches {
 		if rp.Watches[i].Bank == "" {
+			log.Debug("defaulting bank for watch %s (platform=%s)",
+				rp.Watches[i].Name,
+				rp.Platform,
+			)
 			switch rp.Platform {
 			case "SNES":
 				rp.Watches[i].Bank = WRAM
@@ -173,5 +190,10 @@ func NewReadPlan(reader io.Reader) (*ReadPlan, error) {
 		}
 	}
 
+	log.Debug("readplan summary: platform=%s hirom=%v watches=%d",
+		rp.Platform,
+		rp.HiROM,
+		len(rp.Watches),
+	)
 	return &rp, nil
 }
