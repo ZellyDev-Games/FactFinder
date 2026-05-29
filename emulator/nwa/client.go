@@ -2,6 +2,7 @@ package nwa
 
 import (
 	"FactFinder/emulator"
+	"FactFinder/logger"
 	"bufio"
 	"bytes"
 	"encoding/binary"
@@ -11,11 +12,12 @@ import (
 	"math/bits"
 	"net"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
+
+var log = logger.Module("emulator/nwa/client").SetLevel(logger.ErrorLevel)
 
 const wramOffset = 0x7e0000
 const iwramOffset = 0x19000
@@ -46,6 +48,8 @@ type Client struct {
 func NewClient(ip, port string) *Client {
 	tcpAddr, _ := net.ResolveTCPAddr("tcp", ip+":"+port)
 
+	log.Info("creating nwa client for %s", tcpAddr.String())
+
 	return &Client{
 		addr:    tcpAddr,
 		respBuf: make([]byte, 4096),
@@ -54,26 +58,42 @@ func NewClient(ip, port string) *Client {
 }
 
 func (c *Client) ConnectEmulator() emulator.ConnectionStatus {
+	log.Info("attempting emulator connection to %s", c.addr.String())
+
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error("panic in ConnectEmulator: %v", r)
+			c.emulatorConnected = emulator.Disconnected
+		}
+	}()
+
 	conn, err := net.DialTCP("tcp", nil, c.addr)
 	if err != nil {
-		fmt.Println(err)
+		log.Error("tcp dial failed: %v", err)
 		return emulator.Disconnected
 	}
+
+	log.Info("tcp connection established")
+
 	c.conn = conn
 
-	for {
-		summary, err := c.EmuInfo()
-		if err != nil {
-			fmt.Println(err)
-			continue
-		}
-
-		if summary != nil {
-			_ = c.conn.SetReadDeadline(time.Time{})
-			break
-		}
+	summary, err := c.EmuInfo()
+	if err != nil {
+		log.Error("EmuInfo failed: %v", err)
+		c.emulatorConnected = emulator.Disconnected
+		return emulator.Disconnected
 	}
-	fmt.Println("Connected to emulator")
+
+	if summary != nil {
+		log.Error("unexpected emulator info response: %#v", summary)
+
+		_ = c.conn.SetReadDeadline(time.Time{})
+		c.emulatorConnected = emulator.Disconnected
+		return emulator.Disconnected
+	}
+
+	log.Info("connected to emulator successfully")
+
 	c.CoreMemories()
 
 	c.emulatorConnected = emulator.Connected
@@ -82,30 +102,83 @@ func (c *Client) ConnectEmulator() emulator.ConnectionStatus {
 
 func (c *Client) ExecuteCommand(cmd string, argString *string) (EmulatorReply, error) {
 	var command string
+
 	_ = c.conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+
 	if argString == nil {
 		command = fmt.Sprintf("%s\n", cmd)
 	} else {
 		command = fmt.Sprintf("%s %s\n", cmd, *argString)
 	}
 
-	// c.m.Lock()
+	log.Debug("sending command: %q", strings.TrimSpace(command))
+
 	_, err := io.WriteString(c.conn, command)
 	if err != nil {
-		// c.m.Unlock()
+		log.Error("command write failed: %v", err)
 		return nil, err
 	}
 
-	return c.getReply()
+	start := time.Now()
+	reply, err := c.getReply()
+	switch v := reply.(type) {
+	case nil:
+		log.Debug("reply=nil")
+	case hash:
+		log.Debug("reply=hash keys=%d", len(v))
+	case []byte:
+		log.Debug("reply=binary bytes=%d", len(v))
+	case Error:
+		log.Warn(
+			"reply=protocol error kind=%v reason=%s",
+			v.Kind,
+			v.Reason,
+		)
+	default:
+		log.Warn("reply=unknown type=%T", v)
+	}
+	duration := time.Since(start)
+
+	if err != nil {
+		log.Error(
+			"command %s failed after %s: %v",
+			cmd,
+			duration,
+			err,
+		)
+		return nil, err
+	}
+
+	log.Debug(
+		"command %s completed in %s reply=%T",
+		cmd,
+		duration,
+		reply,
+	)
+
+	return reply, nil
 }
 
 func (c *Client) Close() error {
+	log.Info("closing nwa client")
+
 	c.emulatorConnected = emulator.Disconnected
 	c.gameConnected = false
+
 	if c.conn == nil {
+		log.Debug("close skipped: no active connection")
 		return nil
 	}
-	return c.conn.Close()
+
+	err := c.conn.Close()
+	if err != nil {
+		log.Warn("tcp close failed: %v", err)
+		return err
+	}
+
+	log.Info("tcp connection closed")
+
+	return nil
 }
 
 // func (c *Client) Reconnected() (bool, error) {
@@ -134,13 +207,19 @@ type EmulatorReply interface{}
 
 func (c *Client) getReply() (EmulatorReply, error) {
 	readStream := bufio.NewReader(c.conn)
+
 	firstByte, err := readStream.ReadByte()
 	if err != nil {
 		if err == io.EOF {
+			log.Warn("emulator disconnected")
 			return nil, errors.New("connection aborted")
 		}
+
+		log.Error("failed reading reply byte: %v", err)
 		return nil, err
 	}
+
+	log.Debug("reply first byte: %d", firstByte)
 
 	// Ascii
 	// stops reading when the only result is a new line
@@ -162,12 +241,15 @@ func (c *Client) getReply() (EmulatorReply, error) {
 			}
 			colonIndex := bytes.IndexByte(line, ':')
 			if colonIndex == -1 {
+				log.Error("malformed ascii reply line: %q", string(line))
 				return nil, errors.New("malformed line, missing ':'")
 			}
 			key := strings.TrimSpace(string(line[:colonIndex]))
 			value := strings.TrimSpace(string(line[colonIndex+1 : len(line)-1])) // remove trailing \n
 			mapResult[key] = value
 		}
+		log.Debug("ascii reply parsed: %#v", mapResult)
+
 		if _, ok := mapResult["error"]; ok {
 			reason, hasReason := mapResult["reason"]
 			errorStr, hasError := mapResult["error"]
@@ -207,6 +289,10 @@ func (c *Client) getReply() (EmulatorReply, error) {
 			return nil, errors.New("failed to read header")
 		}
 		size := binary.BigEndian.Uint32(header)
+		log.Debug(
+			"binary reply incoming size=%d bytes",
+			size,
+		)
 		data := make([]byte, size)
 		_, err = io.ReadFull(readStream, data)
 		if err != nil {
@@ -238,7 +324,6 @@ func (c *Client) ClientID() {
 	args := "OpenSplit"
 	summary, err := c.ExecuteCommand(cmd, &args)
 	if err != nil {
-		// panic(err)
 		println(err)
 	}
 	fmt.Printf("%#v\n", summary)
@@ -251,7 +336,6 @@ func (c *Client) EmuInfo() (EmulatorReply, error) {
 	if err != nil {
 		println(err)
 		return nil, err
-		// panic(err)
 	}
 	fmt.Printf("%#v\n", summary)
 	return summary, nil
@@ -261,7 +345,6 @@ func (c *Client) EmuGameInfo() {
 	cmd := "GAME_INFO"
 	summary, err := c.ExecuteCommand(cmd, nil)
 	if err != nil {
-		// panic(err)
 		println(err)
 	}
 	fmt.Printf("%#v\n", summary)
@@ -271,7 +354,6 @@ func (c *Client) EmuStatus() {
 	cmd := "EMULATION_STATUS"
 	summary, err := c.ExecuteCommand(cmd, nil)
 	if err != nil {
-		// panic(err)
 		println(err)
 	}
 	fmt.Printf("%#v\n", summary)
@@ -281,7 +363,6 @@ func (c *Client) CoreInfo() {
 	cmd := "CORE_CURRENT_INFO"
 	summary, err := c.ExecuteCommand(cmd, nil)
 	if err != nil {
-		// panic(err)
 		println(err)
 	}
 	fmt.Printf("%#v\n", summary)
@@ -291,7 +372,6 @@ func (c *Client) CoreMemories() {
 	cmd := "CORE_MEMORIES"
 	summary, err := c.ExecuteCommand(cmd, nil)
 	if err != nil {
-		// panic(err)
 		println(err)
 	}
 	fmt.Printf("%#v\n", summary)
@@ -301,7 +381,6 @@ func (c *Client) SoftResetConsole() {
 	cmd := "EMULATION_RESET"
 	summary, err := c.ExecuteCommand(cmd, nil)
 	if err != nil {
-		// panic(err)
 		println(err)
 	}
 	fmt.Printf("%#v\n", summary)
@@ -385,6 +464,13 @@ func (c *Client) CompileReadPlan(plan *emulator.ReadPlan) *emulator.CompiledRead
 		} else {
 			if wEnd > curEnd {
 				cur.Size = wEnd - cur.Start
+				log.Debug(
+					"merged region bank=%s start=%X size=%d watches=%d",
+					cur.Bank,
+					cur.Start,
+					cur.Size,
+					len(cur.Watches),
+				)
 			}
 		}
 
@@ -399,7 +485,11 @@ func (c *Client) CompileReadPlan(plan *emulator.ReadPlan) *emulator.CompiledRead
 	for i := range out.Regions {
 		out.Regions[i].Buffer = make([]byte, out.Regions[i].Size)
 	}
-
+	log.Info(
+		"compiled read plan: %d watches -> %d merged regions",
+		len(plan.Watches),
+		len(out.Regions),
+	)
 	return out
 }
 
@@ -466,21 +556,40 @@ func resolveAddress(plan *emulator.ReadPlan, spec emulator.ReadSpec) int {
 }
 
 func (c *Client) GetValues(plan *emulator.CompiledReadPlan) ([]emulator.Value, error) {
+	log.Debug("reading %d merged regions", len(plan.Regions))
+
 	vals := make([]emulator.Value, 0)
 
 	cmd := "CORE_READ"
+
 	for _, region := range plan.Regions {
-		args := string("RAM") + ";$" + strconv.Itoa(region.Start) + ";" + strconv.Itoa(region.Size)
+		args := fmt.Sprintf(
+			"RAM;$%X;%d",
+			region.Start,
+			region.Size,
+		)
+
+		log.Debug(
+			"CORE_READ bank=%s start=%X end=%X size=%d",
+			region.Bank,
+			region.Start,
+			region.Start+region.Size,
+			region.Size,
+		)
 
 		summary, err := c.ExecuteCommand(cmd, &args)
 		if err != nil {
+			log.Error("CORE_READ failed: %v", err)
 			return nil, err
 		}
 
 		data, ok := summary.([]byte)
 		if !ok {
+			log.Error("unexpected CORE_READ response type %T", summary)
 			return nil, fmt.Errorf("unexpected CORE_READ response type %T", summary)
 		}
+
+		log.Debug("CORE_READ returned %d bytes", len(data))
 
 		if len(data) < region.Size {
 			return nil, fmt.Errorf(
@@ -504,6 +613,7 @@ func (c *Client) GetValues(plan *emulator.CompiledReadPlan) ([]emulator.Value, e
 			vals = append(vals, *val)
 		}
 	}
+	log.Debug("decoded %d values", len(vals))
 
 	return vals, nil
 }
