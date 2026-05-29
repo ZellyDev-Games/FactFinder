@@ -28,6 +28,15 @@ type ConnectionState = {
   message: string;
 };
 
+function useWailsEvent<T>(
+  event: string,
+  handler: (payload: T) => void,
+) {
+  useEffect(() => {
+    return EventsOn(event, handler);
+  }, [event]);
+}
+
 function App() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [emulatorState, setEmulatorState] = useState<Array<Array<string>>>([]);
@@ -46,45 +55,58 @@ function App() {
     useState<ConnectionState>({
       connection_status: ConnectionStatus.Disconnected,
       message: "Opensplit Not Found",
-    }
-    );
+    });
 
   const [selectedClient, setSelectedClient] = useState<EmulatorClient>(
     EmulatorClient.RetroArch,
   );
 
-  useEffect(() => {
-    return EventsOn("emulator:connection", (s: ConnectionState) => {
-      setEmulatorConnection(s);
-    });
-  }, []);
+  useWailsEvent<ConnectionState>(
+    "emulator:connection",
+    setEmulatorConnection,
+  );
+
+  useWailsEvent<ConnectionState>(
+    "opensplit:connection",
+    setOpenSplitConnection,
+  );
+
+  useWailsEvent<Array<Array<string>>>(
+    "emulator:state",
+    setEmulatorState,
+  );
+
+  useWailsEvent<Array<Array<string>>>(
+    "emulator:values",
+    setEmulatorValues,
+  );
 
   useEffect(() => {
-    return EventsOn("opensplit:connection", (s: ConnectionState) => {
-      setOpenSplitConnection(s);
-    });
-  }, []);
+    let mounted = true;
 
-  useEffect(() => {
-    return EventsOn("emulator:state", (s: Array<Array<string>>) => {
-      setEmulatorState(s);
-    });
-  }, []);
-
-  useEffect(() => {
-    return EventsOn("emulator:values", (s: Array<Array<string>>) => {
-      setEmulatorValues(s);
-    });
-  }, []);
-
-  useEffect(() => {
     (async () => {
-      setProviders(await GetFactProviders());
+      try {
+        const result = await GetFactProviders();
+
+        if (mounted) {
+          setProviders(result);
+        }
+      } catch (err) {
+        console.error(err);
+      }
     })();
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const changeProvider = async (e: ChangeEvent<HTMLSelectElement>) => {
-    await SetReadPlan(e.target.value);
+    try {
+      await SetReadPlan(e.target.value);
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   const getStatusColor = (state: ConnectionStatus) => {
@@ -107,6 +129,11 @@ function App() {
           value={selectedClient}
           onChange={async (e) => {
             const client = e.target.value as EmulatorClient;
+
+            if (client === selectedClient) {
+              return;
+            }
+
             setSelectedClient(client);
             await SetEmulatorClient(client);
           }}
@@ -121,7 +148,12 @@ function App() {
           <option value="">Select a Fact Provider</option>
           <option value="">---</option>
           {providers.map((provider: Provider) => (
-            <option value={provider.FilePath}>{provider.Name}</option>
+            <option
+              key={provider.FilePath}
+              value={provider.FilePath}
+            >
+              {provider.Name}
+            </option>
           ))}
         </select>
       </div>
@@ -129,7 +161,11 @@ function App() {
       <div style={{ marginTop: "20px" }}>
         <button
           onClick={async () => {
-            await OpenFactProviderFolder();
+            try {
+              await OpenFactProviderFolder();
+            } catch (err) {
+              console.error(err);
+            }
           }}
         >
           Open Fact Provider Folder
