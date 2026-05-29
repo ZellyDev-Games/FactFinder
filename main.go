@@ -4,6 +4,7 @@ import (
 	"FactFinder/emulator/nwa"
 	"FactFinder/emulator/qusb2snes"
 	"FactFinder/emulator/retroarch"
+	"FactFinder/logger"
 	"FactFinder/processing"
 	"FactFinder/repo"
 	"embed"
@@ -17,6 +18,8 @@ import (
 var assets embed.FS
 
 func main() {
+	logger.Init()
+
 	providerFolder, err := repo.SetupPaths()
 	if err != nil {
 		panic(err)
