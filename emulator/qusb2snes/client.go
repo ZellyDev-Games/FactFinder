@@ -2,6 +2,7 @@ package qusb2snes
 
 import (
 	"FactFinder/emulator"
+	"FactFinder/logger"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/gorilla/websocket"
 )
+
+var log = logger.Module("emulator/qusb2snes/client").SetLevel(logger.ErrorLevel)
 
 const wramBase = 0xF50000
 const sramBase = 0xE00000
@@ -114,39 +117,58 @@ func NewClient(host, port string) *Client {
 }
 
 func (c *Client) ConnectEmulator() emulator.ConnectionStatus {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error("panic in ConnectEmulator: %v", r)
+			c.emulatorConnected = emulator.Disconnected
+		}
+	}()
+
 	conn, _, connErr := websocket.DefaultDialer.Dial(c.addr.String(), nil)
 	if connErr != nil {
-		fmt.Println(connErr)
+		log.Error("websocket dial failed: %v", connErr)
 		return emulator.Disconnected
 	}
 	c.conn = conn
+	log.Info("connected to usb2snes websocket: %s", c.addr.String())
 
-	for {
-		version, versionErr := c.AppVersion()
-		if versionErr != nil {
-			fmt.Println(versionErr)
-			continue
-		}
-		fmt.Printf("%v\n", version)
-
-		err := c.SetName("FactFinder")
-		if err != nil {
-			continue
-		}
-
-		devices, err := c.ListDevice()
-		if err != nil {
-			continue
-		}
-		fmt.Printf("%v\n", devices)
-
-		attachErr := c.Attach(devices[0])
-
-		fmt.Printf("%v\n", attachErr)
-		if attachErr == nil {
-			break
-		}
+	version, versionErr := c.AppVersion()
+	if versionErr != nil {
+		log.Debug("app version request failed: %v", versionErr)
+		c.emulatorConnected = emulator.Disconnected
+		return emulator.Disconnected
 	}
+	log.Debug("device app version: %s", version)
+
+	err := c.SetName("FactFinder")
+	if err != nil {
+		c.emulatorConnected = emulator.Disconnected
+		return emulator.Disconnected
+	}
+
+	devices, err := c.ListDevice()
+	if err != nil {
+		log.Error("list devices failed: %v", err)
+		c.emulatorConnected = emulator.Disconnected
+		return emulator.Disconnected
+	}
+
+	log.Debug("devices: %v", devices)
+
+	if len(devices) == 0 {
+		log.Warn("no QUSB2SNES devices available")
+		c.emulatorConnected = emulator.Disconnected
+		return emulator.Disconnected
+	}
+
+	attachErr := c.Attach(devices[0])
+	if attachErr != nil {
+		log.Error("attach device failed: %v", attachErr)
+		c.emulatorConnected = emulator.Disconnected
+		return emulator.Disconnected
+	}
+
+	log.Info("attached to device: %s", devices[0])
 
 	c.emulatorConnected = emulator.Connected
 	return emulator.Connected
@@ -357,6 +379,11 @@ func (c *Client) GetValues(plan *emulator.CompiledReadPlan) ([]emulator.Value, e
 		totalSize += size
 	}
 
+	log.Debug("requesting SNES memory read: regions=%d totalBytes=%d",
+		len(plan.Regions),
+		totalSize,
+	)
+
 	if err := c.sendCommand(GetAddress, SNES, args...); err != nil {
 		return nil, err
 	}
@@ -365,6 +392,7 @@ func (c *Client) GetValues(plan *emulator.CompiledReadPlan) ([]emulator.Value, e
 	for len(data) < totalSize {
 		_, msgData, err := c.conn.ReadMessage()
 		if err != nil {
+			log.Error("protocol desync: expected %d got %d", totalSize, len(data))
 			return nil, err
 		}
 		data = append(data, msgData...)
@@ -388,6 +416,10 @@ func (c *Client) GetValues(plan *emulator.CompiledReadPlan) ([]emulator.Value, e
 			raw := b[watch.Offset : watch.Offset+watch.Size]
 			v := decodeValue(watch.Spec, raw)
 			if v == nil {
+				log.Error("decode failed: watch=%s size=%d",
+					watch.Spec.Name,
+					watch.Size,
+				)
 				return nil, fmt.Errorf(
 					"unsupported value decode size %d",
 					watch.Size,
@@ -410,16 +442,19 @@ func (c *Client) sendCommand(command Command, space Space, args ...string) error
 		Operands: args,
 	}
 
-	fmt.Printf("%v\n", query)
+	log.Debug("sending command: %s space=%s operands=%v",
+		query.Opcode,
+		query.Space,
+		query.Operands,
+	)
 	jsonData, err := json.Marshal(query)
 
 	if err != nil {
-		fmt.Printf("%v\n", err)
+		log.Error("write websocket message failed: %v", err)
 		return err
 	}
 
 	err = c.conn.WriteMessage(websocket.TextMessage, jsonData)
-	fmt.Printf("%v\n", err)
 	return err
 }
 
@@ -427,7 +462,7 @@ func (c *Client) getReply() (*USB2SnesResult, error) {
 	_, message, err := c.conn.ReadMessage()
 
 	if err != nil {
-		fmt.Printf("%v\n", err)
+		log.Debug("read websocket reply error: %v", err)
 		return nil, err
 	}
 
@@ -439,7 +474,7 @@ func (c *Client) getReply() (*USB2SnesResult, error) {
 		return nil, err
 	}
 
-	fmt.Printf("%v\n", result)
+	log.Debug("usb2snes reply: %+v", result)
 	return &result, nil
 }
 

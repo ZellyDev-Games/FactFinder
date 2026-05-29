@@ -2,6 +2,7 @@ package retroarch
 
 import (
 	"FactFinder/emulator"
+	"FactFinder/logger"
 	"encoding/binary"
 	"fmt"
 	"math/bits"
@@ -11,6 +12,8 @@ import (
 	"sync"
 	"time"
 )
+
+var log = logger.Module("retroarch").SetLevel(logger.ErrorLevel)
 
 const wramOffset = 0x7e0000
 const iwramOffset = 0x19000
@@ -45,38 +48,49 @@ func NewClient(host, port string) *Client {
 }
 
 func (c *Client) ConnectEmulator() emulator.ConnectionStatus {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error("panic in ConnectEmulator: %v", r)
+			c.emulatorConnected = emulator.Disconnected
+		}
+	}()
+
 	conn, err := net.DialUDP("udp", nil, c.addr)
 	if err != nil {
+		log.Error("failed to connect UDP emulator: %v", err)
 		fmt.Println(err)
 		return emulator.Disconnected
 	}
 	c.conn = conn
 
-	for {
-		_, err = c.conn.Write([]byte("VERSION"))
-		if err != nil {
-			fmt.Println(err)
-			continue
-		}
+	_, err = c.conn.Write([]byte("VERSION"))
+	if err != nil {
+		log.Debug("VERSION request failed: %v", err)
+		c.emulatorConnected = emulator.Disconnected
+		return emulator.Disconnected
+	}
 
-		_ = c.conn.SetReadDeadline(time.Now().Add(time.Second * 1))
-		n, _, err := c.conn.ReadFromUDP(c.respBuf)
-		if err != nil {
-			fmt.Println(err)
-			continue
-		}
+	_ = c.conn.SetReadDeadline(time.Now().Add(time.Second * 1))
+	n, _, err := c.conn.ReadFromUDP(c.respBuf)
+	if err != nil {
+		log.Debug("VERSION handshake timeout: %v", err)
+		c.emulatorConnected = emulator.Disconnected
+		return emulator.Disconnected
+	}
 
-		if n > 0 {
-			_ = c.conn.SetReadDeadline(time.Time{})
-			break
-		}
+	log.Info("retroarch handshake completed")
+
+	if n > 0 {
+		_ = c.conn.SetReadDeadline(time.Time{})
 	}
 
 	c.emulatorConnected = emulator.Connected
+	log.Info("retroarch UDP connected: %s", c.addr.String())
 	return emulator.Connected
 }
 
 func (c *Client) Close() error {
+	log.Info("closing retroarch connection")
 	c.emulatorConnected = emulator.Disconnected
 	c.gameConnected = false
 	if c.conn == nil {
@@ -161,6 +175,7 @@ func (c *Client) CompileReadPlan(plan *emulator.ReadPlan) *emulator.CompiledRead
 				cur.Size = wEnd - cur.Start
 			}
 		}
+		log.Debug("region merge completed")
 
 		cur.Watches = append(cur.Watches, emulator.ResolvedWatch{
 			Spec:   w.Spec,
@@ -174,6 +189,10 @@ func (c *Client) CompileReadPlan(plan *emulator.ReadPlan) *emulator.CompiledRead
 		out.Regions[i].Buffer = make([]byte, out.Regions[i].Size)
 	}
 
+	log.Info("compiled read plan: regions=%d watches=%d",
+		len(out.Regions),
+		len(plan.Watches),
+	)
 	return out
 }
 
@@ -240,8 +259,9 @@ func resolveAddress(plan *emulator.ReadPlan, spec emulator.ReadSpec) int {
 }
 
 func (c *Client) GetValues(plan *emulator.CompiledReadPlan) ([]emulator.Value, error) {
-
 	vals := make([]emulator.Value, 0)
+
+	log.Debug("retroarch read cycle: regions=%d", len(plan.Regions))
 
 	for _, region := range plan.Regions {
 		msg := c.buildReadCoreMemoryCmd(
@@ -251,9 +271,12 @@ func (c *Client) GetValues(plan *emulator.CompiledReadPlan) ([]emulator.Value, e
 
 		c.m.Lock()
 
+		log.Debug("reading region start=0x%x size=%d", region.Start, region.Size)
+
 		_, err := c.conn.Write(msg)
 		if err != nil {
 			c.m.Unlock()
+			log.Error("UDP write failed: %v", err)
 			return nil, err
 		}
 
@@ -266,6 +289,7 @@ func (c *Client) GetValues(plan *emulator.CompiledReadPlan) ([]emulator.Value, e
 		c.m.Unlock()
 
 		if err != nil {
+			log.Error("UDP read failed: %v", err)
 			return nil, err
 		}
 
@@ -275,6 +299,7 @@ func (c *Client) GetValues(plan *emulator.CompiledReadPlan) ([]emulator.Value, e
 			region.Size,
 		)
 		if err != nil {
+			log.Error("decode failed for region start=0x%x size=%d", region.Start, region.Size)
 			return nil, err
 		}
 
@@ -291,6 +316,7 @@ func (c *Client) GetValues(plan *emulator.CompiledReadPlan) ([]emulator.Value, e
 		}
 	}
 
+	log.Debug("retroarch read cycle completed: values=%d", len(vals))
 	return vals, nil
 }
 
