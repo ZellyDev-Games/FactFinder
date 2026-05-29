@@ -77,3 +77,8 @@ func (l *Logger) Error(format string, v ...any) {
 	}
 	log.Printf("[ERROR] "+l.component+": "+format, v...)
 }
+
+func (l *Logger) Fatal(format string, v ...any) {
+	log.Printf("[FATAL] "+l.component+": "+format, v...)
+	os.Exit(1)
+}
