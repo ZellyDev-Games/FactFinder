@@ -3,12 +3,9 @@ package qusb2snes
 import (
 	"FactFinder/emulator"
 	"FactFinder/logger"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"math/bits"
 	"net/url"
-	"slices"
 	"strings"
 	"sync"
 
@@ -256,104 +253,30 @@ func (c *Client) Reset() error {
 	return c.sendCommand(Reset, CMD)
 }
 
-func (c *Client) CompileReadPlan(plan *emulator.ReadPlan) *emulator.CompiledReadPlan {
-	type tempWatch struct {
-		Spec emulator.ReadSpec
-		Addr int
-		Size int
-	}
-
-	tmp := make([]tempWatch, 0, len(plan.Watches))
-
-	for _, spec := range plan.Watches {
-		addr := resolveAddress(plan, spec)
-
-		size := spec.SizeOverride
-		if size == 0 {
-			size = spec.Size()
-		}
-
-		tmp = append(tmp, tempWatch{
-			Spec: spec,
-			Addr: addr,
-			Size: size,
-		})
-	}
-
-	slices.SortFunc(tmp, func(a, b tempWatch) int {
-		return a.Addr - b.Addr
-	})
-
-	out := &emulator.CompiledReadPlan{}
-
-	for _, w := range tmp {
-		if len(out.Regions) == 0 {
-			out.Regions = append(out.Regions, emulator.MergedRegion{
-				Bank:  w.Spec.Bank,
-				Start: w.Addr,
-				Size:  w.Size,
-			})
-		}
-
-		cur := &out.Regions[len(out.Regions)-1]
-
-		curEnd := cur.Start + cur.Size
-		wEnd := w.Addr + w.Size
-
-		canMerge :=
-			w.Addr <= curEnd+maxGap &&
-				(wEnd-cur.Start) <= maxReadSize
-
-		if !canMerge {
-			out.Regions = append(out.Regions, emulator.MergedRegion{
-				Bank:  w.Spec.Bank,
-				Start: w.Addr,
-				Size:  w.Size,
-			})
-
-			cur = &out.Regions[len(out.Regions)-1]
-		} else {
-			if wEnd > curEnd {
-				cur.Size = wEnd - cur.Start
-			}
-		}
-
-		cur.Watches = append(cur.Watches, emulator.ResolvedWatch{
-			Spec:   w.Spec,
-			Addr:   w.Addr,
-			Size:   w.Size,
-			Offset: w.Addr - cur.Start,
-		})
-	}
-
-	for i := range out.Regions {
-		out.Regions[i].Buffer = make([]byte, out.Regions[i].Size)
-	}
-
-	return out
+func (c *Client) CompileReadPlan(
+	plan *emulator.ReadPlan,
+) *emulator.CompiledReadPlan {
+	return emulator.CompileReadPlan(
+		plan,
+		emulator.ResolveAddress,
+		qusb2snesAddress,
+	)
 }
 
-func resolveAddress(plan *emulator.ReadPlan, spec emulator.ReadSpec) int {
+func qusb2snesAddress(
+	plan *emulator.ReadPlan,
+	spec emulator.ReadSpec,
+	addr int,
+) int {
 	switch spec.Bank {
 	case emulator.WRAM:
-		// WRAM  Bank = "wram"  // SNES/GB/GBC Memory
-		return int(spec.Address)
+		return addr + wramBase
 
 	case emulator.SRAM:
-		// SRAM  Bank = "sram"  // SNES Save Memory
-		if plan.HiROM {
-			return 0x300000 +
-				0x6000 +
-				(int(spec.Address) % 0xA000) +
-				(int(spec.Address)/0xA000)*0x10000
-		}
-
-		return 0x700000 +
-			(int(spec.Address) % 0x8000) +
-			(int(spec.Address)/0x8000)*0x10000
+		return addr + sramBase
 	}
 
-	return 0
+	return addr
 }
 
 // generate addresses and sizes
@@ -371,7 +294,7 @@ func (c *Client) GetValues(plan *emulator.CompiledReadPlan) ([]emulator.Value, e
 		}
 
 		// Protocol args: address (hex, upper) + size (hex)
-		addr := region.Start + wramBase
+		addr := region.Start
 		args = append(args, strings.ToUpper(fmt.Sprintf("%x", addr)))
 		args = append(args, fmt.Sprintf("%x", size))
 
@@ -414,8 +337,8 @@ func (c *Client) GetValues(plan *emulator.CompiledReadPlan) ([]emulator.Value, e
 
 		for _, watch := range mergedRegion.Watches {
 			raw := b[watch.Offset : watch.Offset+watch.Size]
-			v := decodeValue(watch.Spec, raw)
-			if v == nil {
+			val := emulator.DecodeValue(watch.Spec, raw)
+			if val == nil {
 				log.Error("decode failed: watch=%s size=%d",
 					watch.Spec.Name,
 					watch.Size,
@@ -426,7 +349,7 @@ func (c *Client) GetValues(plan *emulator.CompiledReadPlan) ([]emulator.Value, e
 				)
 			}
 
-			out = append(out, *v)
+			out = append(out, *val)
 		}
 	}
 
@@ -476,46 +399,4 @@ func (c *Client) getReply() (*USB2SnesResult, error) {
 
 	log.Debug("usb2snes reply: %+v", result)
 	return &result, nil
-}
-
-func decodeValue(readSpec emulator.ReadSpec, raw []byte) *emulator.Value {
-	val := emulator.Value{Type: readSpec.Type, Name: readSpec.Name}
-
-	need := readSpec.Size()
-	var u uint64
-
-	switch need {
-	case 1:
-		u = uint64(raw[0])
-	case 2:
-		u = uint64(binary.LittleEndian.Uint16(raw))
-	case 4:
-		u = uint64(binary.LittleEndian.Uint32(raw))
-	case 8:
-		u = binary.LittleEndian.Uint64(raw)
-	default:
-		return nil
-	}
-
-	switch readSpec.Type {
-	case emulator.I8:
-		val.Signed = int64(int8(raw[0]))
-	case emulator.I16:
-		val.Signed = int64(int16(binary.LittleEndian.Uint16(raw)))
-	case emulator.I32:
-		val.Signed = int64(int32(binary.LittleEndian.Uint32(raw)))
-	case emulator.I64:
-		val.Signed = int64(binary.LittleEndian.Uint64(raw))
-	case emulator.U8, emulator.U16, emulator.U32, emulator.U64:
-		val.Unsigned = u
-	case emulator.Bool:
-		val.Bool = u != 0
-	case emulator.FlagCount:
-		if readSpec.Mask != 0 {
-			u = u & 0x3FFF
-		}
-		val.FlagCount = bits.OnesCount64(u)
-	}
-
-	return &val
 }
