@@ -55,7 +55,6 @@ func (c *Client) ConnectEmulator() emulator.ConnectionStatus {
 	conn, err := net.DialUDP("udp", nil, c.addr)
 	if err != nil {
 		log.Error("failed to connect UDP emulator: %v", err)
-		fmt.Println(err)
 		return emulator.Disconnected
 	}
 	c.conn = conn

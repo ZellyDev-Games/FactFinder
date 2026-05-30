@@ -321,9 +321,11 @@ func (c *Client) ClientID() {
 	args := "OpenSplit"
 	summary, err := c.ExecuteCommand(cmd, &args)
 	if err != nil {
-		println(err)
+		log.Error("MY_NAME_IS failed: %v", err)
+		return
 	}
-	fmt.Printf("%#v\n", summary)
+
+	log.Info("MY_NAME_IS response: %#v", summary)
 }
 
 func (c *Client) EmuInfo() (EmulatorReply, error) {
@@ -331,10 +333,11 @@ func (c *Client) EmuInfo() (EmulatorReply, error) {
 	args := "0"
 	summary, err := c.ExecuteCommand(cmd, &args)
 	if err != nil {
-		println(err)
+		log.Error("EMULATOR_INFO failed: %v", err)
 		return nil, err
 	}
-	fmt.Printf("%#v\n", summary)
+
+	log.Debug("EMULATOR_INFO response: %#v", summary)
 	return summary, nil
 }
 
@@ -342,27 +345,33 @@ func (c *Client) EmuGameInfo() {
 	cmd := "GAME_INFO"
 	summary, err := c.ExecuteCommand(cmd, nil)
 	if err != nil {
-		println(err)
+		log.Error("GAME_INFO failed: %v", err)
+		return
 	}
-	fmt.Printf("%#v\n", summary)
+
+	log.Info("GAME_INFO response: %#v", summary)
 }
 
 func (c *Client) EmuStatus() {
 	cmd := "EMULATION_STATUS"
 	summary, err := c.ExecuteCommand(cmd, nil)
 	if err != nil {
-		println(err)
+		log.Error("EMULATION_STATUS failed: %v", err)
+		return
 	}
-	fmt.Printf("%#v\n", summary)
+
+	log.Info("EMULATION_STATUS response: %#v", summary)
 }
 
 func (c *Client) CoreInfo() {
 	cmd := "CORE_CURRENT_INFO"
 	summary, err := c.ExecuteCommand(cmd, nil)
 	if err != nil {
-		println(err)
+		log.Error("CORE_CURRENT_INFO failed: %v", err)
+		return
 	}
-	fmt.Printf("%#v\n", summary)
+
+	log.Info("CORE_CURRENT_INFO response: %#v", summary)
 }
 
 func (c *Client) CoreMemories() {
@@ -379,9 +388,11 @@ func (c *Client) SoftResetConsole() {
 	cmd := "EMULATION_RESET"
 	summary, err := c.ExecuteCommand(cmd, nil)
 	if err != nil {
-		println(err)
+		log.Error("EMULATION_RESET failed: %v", err)
+		return
 	}
-	fmt.Printf("%#v\n", summary)
+
+	log.Info("EMULATION_RESET response: %#v", summary)
 }
 
 func (c *Client) HardResetConsole() {
@@ -389,10 +400,11 @@ func (c *Client) HardResetConsole() {
 	cmd := "EMULATION_RELOAD"
 	summary, err := c.ExecuteCommand(cmd, nil)
 	if err != nil {
-		// panic(err)
-		println(err)
+		log.Error("EMULATION_RELOAD failed: %v", err)
+		return
 	}
-	fmt.Printf("%#v\n", summary)
+
+	log.Info("EMULATION_RELOAD response: %#v", summary)
 }
 
 func (c *Client) EmulatorConnected() emulator.ConnectionStatus {
@@ -553,7 +565,6 @@ func (c *Client) GetValues(plan *emulator.CompiledReadPlan) ([]emulator.Value, e
 
 			val := emulator.DecodeValue(watch.Spec, raw)
 
-			// val := decodeValue(watch.Spec, raw)
 			if val == nil {
 				return nil, fmt.Errorf(
 					"unsupported value decode size %d",
