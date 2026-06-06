@@ -34,14 +34,15 @@ type CompiledReadPlan struct {
 type Bank string
 
 const (
-	WRAM  Bank = "wram"  // SNES/GB/GBC Memory
-	SRAM  Bank = "sram"  // SNES Save Memory
-	RAM   Bank = "ram"   // PSX/NES/Genesis Memory
-	IWRAM Bank = "iwram" // GBA Internal Memory
-	EWRAM Bank = "ewram" // GBA External Memory
-	FCRAM Bank = "fcram" // 3DS Memory
-	PSRAM Bank = "psram" // DS Memory
-	RDRAM Bank = "rdram" // N64 Memory
+	WRAM          Bank = "wram"    // SNES/GB/GBC Memory
+	SRAM          Bank = "sram"    // SNES Save Memory
+	RAM           Bank = "ram"     // PSX/NES/Genesis Memory
+	IWRAM         Bank = "iwram"   // GBA Internal Memory
+	EWRAM         Bank = "ewram"   // GBA External Memory
+	FCRAM         Bank = "fcram"   // 3DS Memory
+	PSRAM         Bank = "psram"   // DS Memory
+	RDRAM         Bank = "rdram"   // N64 Memory
+	ProcessMemory Bank = "process" // PC Memory
 )
 
 func (b *Bank) UnmarshalYAML(value *yaml.Node) error {
