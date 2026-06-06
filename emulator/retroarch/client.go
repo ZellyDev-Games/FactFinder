@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-var log = logger.Module("retroarch").SetLevel(logger.ErrorLevel)
+var log = logger.Module("emulator/retroarch/client").SetLevel(logger.ErrorLevel)
 
 const wramOffset = 0x7e0000
 const iwramOffset = 0x19000
