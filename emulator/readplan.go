@@ -10,7 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var log = logger.Module("emulator/readplan").SetLevel(logger.ErrorLevel)
+var log = logger.Module("emulator/readplan").SetLevel(logger.DebugLevel)
 
 type ResolvedWatch struct {
 	Spec   ReadSpec
@@ -28,7 +28,8 @@ type MergedRegion struct {
 }
 
 type CompiledReadPlan struct {
-	Regions []MergedRegion
+	Regions        []MergedRegion
+	PointerWatches []ReadSpec
 }
 
 type Bank string
@@ -67,6 +68,8 @@ func (b *Bank) UnmarshalYAML(value *yaml.Node) error {
 		*b = PSRAM
 	case "rdram":
 		*b = RDRAM
+	case "process":
+		*b = ProcessMemory
 	default:
 		log.Error("unknown bank in yaml: %q", value.Value)
 		return fmt.Errorf("unknown bank: %q", value.Value)
@@ -74,6 +77,39 @@ func (b *Bank) UnmarshalYAML(value *yaml.Node) error {
 
 	return nil
 }
+
+// type AddressRef string
+
+// const (
+// 	GameBase AddressRef = "GAMEBASE"
+// )
+
+// type Address struct {
+// 	Ref   AddressRef
+// 	Value uint64
+// }
+
+// func (a *Address) UnmarshalYAML(node *yaml.Node) error {
+// 	s := strings.TrimSpace(node.Value)
+
+// 	// switch strings.ToUpper(s) {
+// 	// case "GAMEBASE":
+// 	// 	a.Ref = GameBase
+// 	// 	return nil
+// 	// }
+
+// 	v, err := strconv.ParseUint(
+// 		strings.TrimPrefix(strings.ToLower(s), "0x"),
+// 		16,
+// 		64,
+// 	)
+// 	if err != nil {
+// 		return err
+// 	}
+
+// 	a.Value = v
+// 	return nil
+// }
 
 type HexInt int
 
@@ -107,9 +143,11 @@ const (
 type ReadSpec struct {
 	Name         string    `yaml:"name"`
 	Address      HexInt    `yaml:"address"`
+	Offsets      []HexInt  `yaml:"offsets,omitempty"`
 	Type         ValueType `yaml:"type"`
 	Bank         Bank      `yaml:"bank,omitempty"`
 	SizeOverride int       `yaml:"size,omitempty"`
+	StringLength int       `yaml:"stringLength,omitempty"`
 	Mask         HexInt    `yaml:"mask,omitempty"`
 }
 
@@ -123,21 +161,30 @@ func (r ReadSpec) Size() int {
 		return 1
 	case I16, U16:
 		return 2
-	case I32, U32:
+	case F32, I32, U32:
 		return 4
-	case I64, U64:
+	case F64, I64, U64:
 		return 8
 	default:
 		return 0
 	}
 }
 
+type Signature struct {
+	Pattern      string `yaml:"pattern,omitempty"`
+	ScanOffset   int    `yaml:"offset,omitempty"`
+	Deref        bool   `yaml:"deref,omitempty"`
+	ResultOffset int    `yaml:"resultOffset,omitempty"`
+}
+
 type ReadPlan struct {
-	Name         string     `yaml:"Name"`
-	ReadInterval int64      `yaml:"ReadInterval"`
-	HiROM        bool       `yaml:"HiROM"`
-	Watches      []ReadSpec `yaml:"Watches"`
-	Platform     string     `yaml:"Platform"`
+	Name             string     `yaml:"Name"`
+	ProcessName      string     `yaml:"ProcessName,omitempty"`
+	ProcessSignature Signature  `yaml:",inline"`
+	ReadInterval     int64      `yaml:"ReadInterval"`
+	HiROM            bool       `yaml:"HiROM"`
+	Watches          []ReadSpec `yaml:"Watches"`
+	Platform         string     `yaml:"Platform"`
 }
 
 func NewReadPlan(reader io.Reader) (*ReadPlan, error) {

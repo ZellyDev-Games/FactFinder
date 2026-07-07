@@ -19,8 +19,14 @@ func CompileReadPlan(
 	mapper AddressMapper,
 ) *CompiledReadPlan {
 	tmp := make([]tempWatch, 0, len(plan.Watches))
+	out := &CompiledReadPlan{}
 
 	for _, spec := range plan.Watches {
+		if spec.Bank == ProcessMemory {
+			out.PointerWatches =
+				append(out.PointerWatches, spec)
+			continue
+		}
 		addr := resolve(plan, spec)
 
 		if mapper != nil {
@@ -42,8 +48,6 @@ func CompileReadPlan(
 	slices.SortFunc(tmp, func(a, b tempWatch) int {
 		return a.Addr - b.Addr
 	})
-
-	out := &CompiledReadPlan{}
 
 	for _, w := range tmp {
 		if len(out.Regions) == 0 {
