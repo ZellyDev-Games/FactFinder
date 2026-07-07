@@ -33,6 +33,7 @@ func main() {
 	raClient := retroarch.NewClient("localhost", "55355")
 	nwaClient := nwa.NewClient("localhost", "48879")
 	qUSB2SNESClient := qusb2snes.NewClient("localhost", "23074")
+	// linuxProcessClient := linuxmem.NewClient()
 	engine, osConnCh := processing.NewEngine()
 
 	app := NewApp(
@@ -40,6 +41,7 @@ func main() {
 		raClient,
 		nwaClient,
 		qUSB2SNESClient,
+		// linuxProcessClient,
 		engine,
 		osConnCh,
 	)
