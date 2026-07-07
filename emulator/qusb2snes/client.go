@@ -12,7 +12,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-var log = logger.Module("emulator/qusb2snes/client").SetLevel(logger.ErrorLevel)
+var log = logger.Module("emulator/qusb2snes/client").SetLevel(logger.InfoLevel)
 
 const wramBase = 0xF50000
 const sramBase = 0xE00000

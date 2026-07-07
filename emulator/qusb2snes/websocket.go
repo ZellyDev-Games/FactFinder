@@ -10,7 +10,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-var wsLog = logger.Module("emulator/qusb2snes/websocket").SetLevel(logger.ErrorLevel)
+var wsLog = logger.Module("emulator/qusb2snes/websocket").SetLevel(logger.InfoLevel)
 
 var ErrClosed = errors.New("client is closed")
 

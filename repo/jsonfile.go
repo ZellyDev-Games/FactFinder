@@ -9,7 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var log = logger.Module("repo/jsonfile").SetLevel(logger.ErrorLevel)
+var log = logger.Module("repo/jsonfile").SetLevel(logger.DebugLevel)
 
 type readPlanYAML struct {
 	Name string `yaml:"Name"`

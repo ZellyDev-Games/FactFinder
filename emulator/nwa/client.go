@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-var log = logger.Module("emulator/nwa/client").SetLevel(logger.ErrorLevel)
+var log = logger.Module("emulator/nwa/client").SetLevel(logger.InfoLevel)
 
 const maxGap = 16
 const maxReadSize = 4096
