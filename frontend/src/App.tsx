@@ -1,19 +1,20 @@
 import { ChangeEvent, useEffect, useState } from "react";
-import "./App.css";
-import { repo } from "../wailsjs/go/models";
-import Provider = repo.Provider;
 import {
   GetFactProviders,
   OpenFactProviderFolder,
-  SetReadPlan,
   SetEmulatorClient,
+  SetReadPlan,
 } from "../wailsjs/go/main/App";
+import { repo } from "../wailsjs/go/models";
 import { EventsOn } from "../wailsjs/runtime";
+import "./App.css";
+import Provider = repo.Provider;
 
 enum EmulatorClient {
   RetroArch = "retroarch",
   NWA = "nwa",
   QUSB2SNES = "qusb2snes",
+  // LinuxMem = "linuxmem",
 }
 
 enum ConnectionStatus {
@@ -28,10 +29,7 @@ type ConnectionState = {
   message: string;
 };
 
-function useWailsEvent<T>(
-  event: string,
-  handler: (payload: T) => void,
-) {
+function useWailsEvent<T>(event: string, handler: (payload: T) => void) {
   useEffect(() => {
     return EventsOn(event, handler);
   }, [event]);
@@ -61,25 +59,16 @@ function App() {
     EmulatorClient.RetroArch,
   );
 
-  useWailsEvent<ConnectionState>(
-    "emulator:connection",
-    setEmulatorConnection,
-  );
+  useWailsEvent<ConnectionState>("emulator:connection", setEmulatorConnection);
 
   useWailsEvent<ConnectionState>(
     "opensplit:connection",
     setOpenSplitConnection,
   );
 
-  useWailsEvent<Array<Array<string>>>(
-    "emulator:state",
-    setEmulatorState,
-  );
+  useWailsEvent<Array<Array<string>>>("emulator:state", setEmulatorState);
 
-  useWailsEvent<Array<Array<string>>>(
-    "emulator:values",
-    setEmulatorValues,
-  );
+  useWailsEvent<Array<Array<string>>>("emulator:values", setEmulatorValues);
 
   useEffect(() => {
     let mounted = true;
@@ -141,6 +130,7 @@ function App() {
           <option value={EmulatorClient.RetroArch}>RetroArch</option>
           <option value={EmulatorClient.NWA}>NWA</option>
           <option value={EmulatorClient.QUSB2SNES}>QUSB2SNES</option>
+          {/*<option value={EmulatorClient.LinuxMem}>Linux/Proton/Wine</option>*/}
         </select>
       </div>
       <div>
@@ -148,10 +138,7 @@ function App() {
           <option value="">Select a Fact Provider</option>
           <option value="">---</option>
           {providers.map((provider: Provider) => (
-            <option
-              key={provider.FilePath}
-              value={provider.FilePath}
-            >
+            <option key={provider.FilePath} value={provider.FilePath}>
               {provider.Name}
             </option>
           ))}
