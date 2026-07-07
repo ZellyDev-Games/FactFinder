@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-var log = logger.Module("emulator/retroarch/client").SetLevel(logger.ErrorLevel)
+var log = logger.Module("emulator/retroarch/client").SetLevel(logger.InfoLevel)
 
 const wramOffset = 0x7e0000
 const iwramOffset = 0x19000
@@ -48,7 +48,9 @@ func (c *Client) ConnectEmulator() emulator.ConnectionStatus {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error("panic in ConnectEmulator: %v", r)
+			c.m.Lock()
 			c.emulatorConnected = emulator.Disconnected
+			c.m.Unlock()
 		}
 	}()
 
@@ -62,7 +64,9 @@ func (c *Client) ConnectEmulator() emulator.ConnectionStatus {
 	_, err = c.conn.Write([]byte("VERSION"))
 	if err != nil {
 		log.Debug("VERSION request failed: %v", err)
+		c.m.Lock()
 		c.emulatorConnected = emulator.Disconnected
+		c.m.Unlock()
 		return emulator.Disconnected
 	}
 
@@ -70,7 +74,9 @@ func (c *Client) ConnectEmulator() emulator.ConnectionStatus {
 	n, _, err := c.conn.ReadFromUDP(c.respBuf)
 	if err != nil {
 		log.Debug("VERSION handshake timeout: %v", err)
+		c.m.Lock()
 		c.emulatorConnected = emulator.Disconnected
+		c.m.Unlock()
 		return emulator.Disconnected
 	}
 
@@ -80,14 +86,19 @@ func (c *Client) ConnectEmulator() emulator.ConnectionStatus {
 		_ = c.conn.SetReadDeadline(time.Time{})
 	}
 
+	c.m.Lock()
 	c.emulatorConnected = emulator.Connected
+	c.m.Unlock()
+
 	log.Info("retroarch UDP connected: %s", c.addr.String())
 	return emulator.Connected
 }
 
 func (c *Client) Close() error {
 	log.Info("closing retroarch connection")
+	c.m.Lock()
 	c.emulatorConnected = emulator.Disconnected
+	c.m.Unlock()
 	c.gameConnected = false
 	if c.conn == nil {
 		return nil
@@ -105,6 +116,8 @@ func (c *Client) buildReadCoreMemoryCmd(address int, size int) []byte {
 }
 
 func (c *Client) EmulatorConnected() emulator.ConnectionStatus {
+	c.m.Lock()
+	defer c.m.Unlock()
 	return c.emulatorConnected
 }
 
