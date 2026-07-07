@@ -5,6 +5,10 @@ import "errors"
 type ValueType string
 
 const (
+	F32       ValueType = "F32"
+	F64       ValueType = "F64"
+	String    ValueType = "String"
+	UTF16LE   ValueType = "UTF16LE"
 	I8        ValueType = "I8"
 	I16       ValueType = "I16"
 	I32       ValueType = "I32"
@@ -33,6 +37,9 @@ type Value struct {
 	Name      string
 	Signed    int64
 	Unsigned  uint64
+	Float32   float32
+	Float64   float64
+	String    string
 	Bool      bool
 	FlagCount int
 }
@@ -41,6 +48,7 @@ type Connector interface {
 	ConnectEmulator() ConnectionStatus
 	EmulatorConnected() ConnectionStatus
 	GameConnected() bool
+	Close() error
 }
 
 type Reader interface {
