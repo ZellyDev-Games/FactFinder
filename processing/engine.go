@@ -12,7 +12,7 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
-var log = logger.Module("processing/engine").SetLevel(logger.ErrorLevel)
+var log = logger.Module("processing/engine").SetLevel(logger.DebugLevel)
 
 type Command byte
 
@@ -32,7 +32,14 @@ const (
 	PAUSE
 	TOGGLEGLOBAL
 	FOCUS
+	TOGGLEWR
 	HELLO
+	DONE
+	UNDONE
+	SET_RUNTIME_OFFSET
+	CLEAR_RUNTIME_OFFSET
+	COMPARISON_LEFT
+	COMPARISON_RIGHT
 )
 
 type Engine struct {
@@ -211,6 +218,12 @@ func (e *Engine) ProcessValues(values []emulator.Value) error {
 		case emulator.U8, emulator.U16, emulator.U32, emulator.U64:
 			e.L.SetGlobal(name+"_last", lua.LNumber(e.values[name].Unsigned))
 			e.L.SetGlobal(name, lua.LNumber(newValue.Unsigned))
+		case emulator.F32:
+			e.L.SetGlobal(name+"_last", lua.LNumber(e.values[name].Float32))
+			e.L.SetGlobal(name, lua.LNumber(newValue.Float32))
+		case emulator.String:
+			e.L.SetGlobal(name+"_last", lua.LString(e.values[name].String))
+			e.L.SetGlobal(name, lua.LString(newValue.String))
 		default:
 			e.L.SetGlobal(name+"_last", lua.LNumber(e.values[name].Signed))
 			e.L.SetGlobal(name, lua.LNumber(newValue.Signed))
