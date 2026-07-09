@@ -1,6 +1,5 @@
 Improve switching EMU interface types
 reconnect if EMU closes
 need other console testing
-open folder button is broken
 move config to .config directory
 add support for bitwise operators in lua
