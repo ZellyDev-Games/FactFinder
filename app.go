@@ -110,7 +110,7 @@ func (a *App) SetEmulatorClient(client string) error {
 		a.memoryReader = a.qusb2snes
 
 	// case "linuxmem":
-	// 	a.memoryReader = a.linuxProcessClient
+	// a.memoryReader = a.linuxProcessClient
 
 	default:
 		a.m.Unlock()
@@ -170,7 +170,7 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) GetFactProviders() ([]repo.Provider, error) {
-	plans, err := repo.ScanReadPlans()
+	plans, err := repo.ScanReadPlans(a.factFinderFolder)
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +211,7 @@ func (a *App) SetReadPlan(path string) error {
 	// rp := a.readPlan
 
 	// if linux, ok := a.memoryReader.(*linuxmem.Client); ok {
-	// 	linux.SetReadPlan(rp)
+	// linux.SetReadPlan(rp)
 	// }
 
 	luaFile := filepath.Join(path, "factbuilder.lua")

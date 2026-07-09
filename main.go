@@ -1,6 +1,7 @@
 package main
 
 import (
+	// linuxmem "FactFinder/emulator/linux"
 	"FactFinder/emulator/nwa"
 	"FactFinder/emulator/qusb2snes"
 	"FactFinder/emulator/retroarch"
@@ -20,12 +21,12 @@ var assets embed.FS
 func main() {
 	logger.Init()
 
-	providerFolder, err := repo.SetupPaths()
+	paths, err := repo.SetupPaths()
 	if err != nil {
 		panic(err)
 	}
 
-	_, err = repo.ScanReadPlans()
+	_, err = repo.ScanReadPlans(paths.ProviderDir)
 	if err != nil {
 		panic(err)
 	}
@@ -37,7 +38,7 @@ func main() {
 	engine, osConnCh := processing.NewEngine()
 
 	app := NewApp(
-		providerFolder,
+		paths.ProviderDir,
 		raClient,
 		nwaClient,
 		qUSB2SNESClient,
