@@ -13,7 +13,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -108,7 +110,7 @@ func (a *App) SetEmulatorClient(client string) error {
 		a.memoryReader = a.qusb2snes
 
 	// case "linuxmem":
-	// a.memoryReader = a.linuxProcessClient
+	// 	a.memoryReader = a.linuxProcessClient
 
 	default:
 		a.m.Unlock()
@@ -176,8 +178,18 @@ func (a *App) GetFactProviders() ([]repo.Provider, error) {
 	return plans, nil
 }
 
-func (a *App) OpenFactProviderFolder() {
-	runtime.BrowserOpenURL(a.ctx, a.factFinderFolder)
+// func (a *App) OpenFactProviderFolder() {
+func (a *App) OpenFactProviderFolder() error {
+	switch goruntime.GOOS {
+	case "windows":
+		return exec.Command("explorer", a.factFinderFolder).Start()
+
+	case "darwin":
+		return exec.Command("open", a.factFinderFolder).Start()
+
+	default: // linux
+		return exec.Command("xdg-open", a.factFinderFolder).Start()
+	}
 }
 
 func (a *App) SetReadPlan(path string) error {
@@ -199,7 +211,7 @@ func (a *App) SetReadPlan(path string) error {
 	// rp := a.readPlan
 
 	// if linux, ok := a.memoryReader.(*linuxmem.Client); ok {
-	// linux.SetReadPlan(rp)
+	// 	linux.SetReadPlan(rp)
 	// }
 
 	luaFile := filepath.Join(path, "factbuilder.lua")
