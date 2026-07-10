@@ -20,39 +20,16 @@ type Provider struct {
 	Name     string
 }
 
-func SetupPaths() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-
-	planFolder := filepath.Join(home, "FactFinder", "Providers")
-
-	err = os.MkdirAll(planFolder, os.ModePerm)
-	if err != nil {
-		return "", err
-	}
-
-	log.Info("provider folder initialized: %s", planFolder)
-
-	return planFolder, nil
-}
-
-func ScanReadPlans() ([]Provider, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
+func ScanReadPlans(providerDir string) ([]Provider, error) {
 	log.Debug("scanning provider folder")
 
-	planFolder := filepath.Join(home, "FactFinder", "Providers")
-
-	entries, err := os.ReadDir(planFolder)
+	entries, err := os.ReadDir(providerDir)
 	if err != nil {
-		return nil, fmt.Errorf("read providers folder %q: %w", planFolder, err)
+		return nil, fmt.Errorf("read providers folder %q: %w", providerDir, err)
 	}
 
 	log.Debug("found %d entries in provider folder", len(entries))
+
 	out := make([]Provider, 0)
 
 	for _, ent := range entries {
@@ -61,9 +38,8 @@ func ScanReadPlans() ([]Provider, error) {
 			continue
 		}
 
-		dirPath := filepath.Join(planFolder, ent.Name())
+		dirPath := filepath.Join(providerDir, ent.Name())
 
-		// Require both files to exist
 		readPlanPath := filepath.Join(dirPath, "readplan.yml")
 		factBuilderPath := filepath.Join(dirPath, "factbuilder.lua")
 
