@@ -19,8 +19,8 @@ const fcramOffset = 0x20000000
 const psramOffset = 0x02000000
 const psxRAMOffset = 0x010000
 
-const maxGap = 16
-const maxReadSize = 4096
+// const maxGap = 16
+// const maxReadSize = 4096
 
 type Client struct {
 	m                 sync.Mutex

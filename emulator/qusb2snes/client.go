@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
-	"sync"
 
 	"github.com/gorilla/websocket"
 )
@@ -17,8 +16,8 @@ var log = logger.Module("emulator/qusb2snes/client").SetLevel(logger.InfoLevel)
 const wramBase = 0xF50000
 const sramBase = 0xE00000
 
-const maxGap = 16
-const maxReadSize = 4096
+// const maxGap = 16
+// const maxReadSize = 4096
 
 type Command int
 
@@ -93,7 +92,7 @@ type USB2SnesResult struct {
 type USB2SnesFileType int
 
 type Client struct {
-	m                 sync.Mutex
+	// m                 sync.Mutex
 	conn              *websocket.Conn
 	emulatorConnected emulator.ConnectionStatus
 	addr              *url.URL

@@ -11,14 +11,13 @@ import (
 	"io"
 	"net"
 	"strings"
-	"sync"
 	"time"
 )
 
 var log = logger.Module("emulator/nwa/client").SetLevel(logger.InfoLevel)
 
-const maxGap = 16
-const maxReadSize = 4096
+// const maxGap = 16
+// const maxReadSize = 4096
 
 type Error struct {
 	Kind   errorKind
@@ -26,7 +25,7 @@ type Error struct {
 }
 
 type Client struct {
-	m                 sync.Mutex
+	// m                 sync.Mutex
 	conn              *net.TCPConn
 	emulatorConnected emulator.ConnectionStatus
 	addr              *net.TCPAddr
