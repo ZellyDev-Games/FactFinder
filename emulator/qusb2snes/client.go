@@ -2,24 +2,22 @@ package qusb2snes
 
 import (
 	"FactFinder/emulator"
-	"encoding/binary"
+	"FactFinder/logger"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"net/url"
 	"strings"
-	"time"
+
+	"github.com/gorilla/websocket"
 )
 
+var log = logger.Module("emulator/qusb2snes/client").SetLevel(logger.InfoLevel)
+
 const wramBase = 0xF50000
+const sramBase = 0xE00000
 
-//const sramBase = 0xE00000
-
-type MessageReaderWriter interface {
-	WriteMessage(data []byte) error
-	ReadMessage() (p []byte, err error)
-	Connect()
-	Connected() bool
-}
+// const maxGap = 16
+// const maxReadSize = 4096
 
 type Command int
 
@@ -94,47 +92,148 @@ type USB2SnesResult struct {
 type USB2SnesFileType int
 
 type Client struct {
-	messageReaderWriter MessageReaderWriter
-	attached            bool
+	// m                 sync.Mutex
+	conn              *websocket.Conn
+	emulatorConnected emulator.ConnectionStatus
+	addr              *url.URL
+	gameConnected     bool
+
+	respBuf []byte
+	byteBuf []byte
 }
 
-func NewClient(messageReaderWriter MessageReaderWriter) *Client {
+func NewClient(host, port string) *Client {
+	websocketURL := url.URL{
+		Scheme: "ws",
+		Host:   host + ":" + port,
+		Path:   "/",
+	}
+
+	log.Info(
+		"creating qusb2snes client for %s",
+		websocketURL.String(),
+	)
+
 	return &Client{
-		messageReaderWriter: messageReaderWriter,
+		addr:    &websocketURL,
+		respBuf: make([]byte, 4096),
+		byteBuf: make([]byte, 0, 16),
 	}
 }
 
-func (c *Client) Connect() error {
-	c.messageReaderWriter.Connect()
-	for {
-		if c.messageReaderWriter.Connected() {
-			break
-		} else {
-			time.Sleep(2 * time.Second)
+func (c *Client) ConnectEmulator() emulator.ConnectionStatus {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error("panic in ConnectEmulator: %v", r)
+			c.emulatorConnected = emulator.Disconnected
 		}
+	}()
+
+	log.Info(
+		"attempting websocket connection to %s",
+		c.addr.String(),
+	)
+
+	conn, _, connErr := websocket.DefaultDialer.Dial(c.addr.String(), nil)
+	if connErr != nil {
+		log.Error("websocket dial failed: %v", connErr)
+		return emulator.Disconnected
 	}
+	c.conn = conn
+	log.Info("connected to usb2snes websocket: %s", c.addr.String())
+
+	version, versionErr := c.AppVersion()
+	if versionErr != nil {
+		log.Debug("app version request failed: %v", versionErr)
+		c.emulatorConnected = emulator.Disconnected
+		return emulator.Disconnected
+	}
+	log.Info(
+		"usb2snes app version: %s",
+		version,
+	)
 
 	err := c.SetName("FactFinder")
 	if err != nil {
-		return err
+		c.emulatorConnected = emulator.Disconnected
+		return emulator.Disconnected
 	}
 
 	devices, err := c.ListDevice()
 	if err != nil {
-		return err
+		log.Error("list devices failed: %v", err)
+		c.emulatorConnected = emulator.Disconnected
+		return emulator.Disconnected
 	}
 
-	err = c.Attach(devices[0])
+	log.Info(
+		"found %d devices",
+		len(devices),
+	)
+
+	for _, d := range devices {
+		log.Debug("device: %s", d)
+	}
+
+	if len(devices) == 0 {
+		log.Warn("no QUSB2SNES devices available")
+		c.emulatorConnected = emulator.Disconnected
+		return emulator.Disconnected
+	}
+
+	log.Info(
+		"attaching to device %s",
+		devices[0],
+	)
+	attachErr := c.Attach(devices[0])
+	if attachErr != nil {
+		log.Error("attach device failed: %v", attachErr)
+		c.emulatorConnected = emulator.Disconnected
+		return emulator.Disconnected
+	}
+
+	info, err := c.Info()
+	if err == nil {
+		log.Info(
+			"attached device=%s type=%s game=%s",
+			info.Version,
+			info.DevType,
+			info.Game,
+		)
+	}
+
+	c.emulatorConnected = emulator.Connected
+	return emulator.Connected
+}
+
+func (c *Client) Close() error {
+	log.Info("closing qusb2snes client")
+
+	c.emulatorConnected = emulator.Disconnected
+	c.gameConnected = false
+
+	if c.conn == nil {
+		log.Debug("close skipped: no websocket")
+		return nil
+	}
+
+	err := c.conn.Close()
 	if err != nil {
+		log.Warn("websocket close failed: %v", err)
 		return err
 	}
 
-	c.attached = true
+	log.Info("websocket closed")
+
 	return nil
 }
 
-func (c *Client) Connected() bool {
-	return c.messageReaderWriter.Connected()
+func (c *Client) EmulatorConnected() emulator.ConnectionStatus {
+	return c.emulatorConnected
+}
+
+func (c *Client) GameConnected() bool {
+	return c.gameConnected
 }
 
 func (c *Client) SetName(name string) error {
@@ -146,13 +245,16 @@ func (c *Client) AppVersion() (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	reply, err := c.getReply()
 	if err != nil {
 		return "", err
 	}
+
 	if len(reply.Results) == 0 {
 		return "", fmt.Errorf("no results in reply")
 	}
+
 	return reply.Results[0], nil
 }
 
@@ -169,26 +271,33 @@ func (c *Client) ListDevice() ([]string, error) {
 }
 
 func (c *Client) Attach(device string) error {
-	return c.sendCommand(Attach, CMD, device)
+	return c.sendCommand(Attach, SNES, device)
 }
 
 func (c *Client) Info() (*Info, error) {
 	err := c.sendCommand(InfoCommand, CMD)
+
 	if err != nil {
 		return nil, err
 	}
+
 	usbReply, err := c.getReply()
 	if err != nil {
 		return nil, err
 	}
+
 	info := usbReply.Results
+
 	if len(info) < 3 {
 		return nil, fmt.Errorf("unexpected reply length")
 	}
+
 	var flags []string
+
 	if len(info) > 3 {
 		flags = info[3:]
 	}
+
 	return &Info{
 		Version: info[0],
 		DevType: info[1],
@@ -201,55 +310,139 @@ func (c *Client) Reset() error {
 	return c.sendCommand(Reset, CMD)
 }
 
-func (c *Client) GetValues(specs []emulator.ReadSpec) ([]emulator.Value, error) {
-	args := make([]string, 0, len(specs)*2)
+func (c *Client) CompileReadPlan(
+	plan *emulator.ReadPlan,
+) *emulator.CompiledReadPlan {
+	return emulator.CompileReadPlan(
+		plan,
+		emulator.ResolveAddress,
+		qusb2snesAddress,
+	)
+}
+
+func qusb2snesAddress(
+	plan *emulator.ReadPlan,
+	spec emulator.ReadSpec,
+	addr int,
+) int {
+	switch spec.Bank {
+	case emulator.WRAM:
+		return addr + wramBase
+
+	case emulator.SRAM:
+		return addr + sramBase
+	}
+
+	return addr
+}
+
+// generate addresses and sizes
+// get data
+// copy into external data
+func (c *Client) GetValues(plan *emulator.CompiledReadPlan) ([]emulator.Value, error) {
+	log.Debug(
+		"reading %d merged regions",
+		len(plan.Regions),
+	)
+
+	var args []string
+	var sizes []int
 	totalSize := 0
 
-	sizes := make([]int, 0, len(specs))
-	for _, s := range specs {
-		size := s.Size()
+	for index, region := range plan.Regions {
+		log.Debug(
+			"GetAddress region=%d start=$%X size=%d watches=%d",
+			index,
+			region.Start,
+			region.Size,
+			len(region.Watches),
+		)
+
+		size := region.Size
 		if size <= 0 {
-			return nil, fmt.Errorf("invalid size for spec %+v", s)
+			return nil, fmt.Errorf("invalid size for region")
 		}
 
 		// Protocol args: address (hex, upper) + size (hex)
-		addr := s.Address + wramBase
+		addr := region.Start
 		args = append(args, strings.ToUpper(fmt.Sprintf("%x", addr)))
 		args = append(args, fmt.Sprintf("%x", size))
 
 		sizes = append(sizes, size)
 		totalSize += size
 	}
+
+	log.Debug("requesting SNES memory read: regions=%d totalBytes=%d",
+		len(plan.Regions),
+		totalSize,
+	)
+
 	if err := c.sendCommand(GetAddress, SNES, args...); err != nil {
 		return nil, err
 	}
+	log.Debug(
+		"expecting %d bytes total",
+		totalSize,
+	)
 
 	data := make([]byte, 0, totalSize)
 	for len(data) < totalSize {
-		msgData, err := c.messageReaderWriter.ReadMessage()
+		_, msgData, err := c.conn.ReadMessage()
+		log.Debug(
+			"rx binary chunk=%d accumulated=%d/%d",
+			len(msgData),
+			len(data)+len(msgData),
+			totalSize,
+		)
 		if err != nil {
+			log.Error("protocol desync: expected %d got %d", totalSize, len(data))
 			return nil, err
 		}
 		data = append(data, msgData...)
 	}
 
 	if len(data) != totalSize {
-		return nil, fmt.Errorf("protocol desync: expected %d bytes, got %d", totalSize, len(data))
+		log.Error(
+			"binary read size mismatch expected=%d got=%d",
+			totalSize,
+			len(data),
+		)
 	}
 
-	out := make([]emulator.Value, 0, len(specs))
+	var out []emulator.Value
 	consumed := 0
-	for i, s := range specs {
-		size := sizes[i]
+
+	for index, mergedRegion := range plan.Regions {
+		// size of region
+		size := sizes[index]
+		// data for region
 		b := data[consumed : consumed+size]
 		consumed += size
 
-		v, err := decodeValue(s.Type, b)
-		if err != nil {
-			return nil, fmt.Errorf("decode failed for addr=%#x type=%v: %w", s.Address, s.Type, err)
+		for _, watch := range mergedRegion.Watches {
+			raw := b[watch.Offset : watch.Offset+watch.Size]
+			val := emulator.DecodeValue(watch.Spec, raw)
+			if val == nil {
+				log.Error(
+					"decode failed watch=%s type=%v size=%d raw=% X",
+					watch.Spec.Name,
+					watch.Spec.Type,
+					watch.Size,
+					raw,
+				)
+				return nil, fmt.Errorf(
+					"unsupported value decode size %d",
+					watch.Size,
+				)
+			}
+
+			out = append(out, *val)
 		}
-		out = append(out, v)
 	}
+	log.Debug(
+		"decoded %d values",
+		len(out),
+	)
 
 	return out, nil
 }
@@ -262,84 +455,87 @@ func (c *Client) sendCommand(command Command, space Space, args ...string) error
 		Operands: args,
 	}
 
+	log.Debug("sending command: %s space=%s operands=%v",
+		query.Opcode,
+		query.Space,
+		query.Operands,
+	)
 	jsonData, err := json.Marshal(query)
+
 	if err != nil {
+		log.Error(
+			"failed to marshal command %s: %v",
+			query.Opcode,
+			err,
+		)
 		return err
 	}
-	err = c.messageReaderWriter.WriteMessage(jsonData)
+
+	log.Debug(
+		"tx opcode=%s space=%s operands=%v",
+		query.Opcode,
+		query.Space,
+		query.Operands,
+	)
+	err = c.conn.WriteMessage(
+		websocket.TextMessage,
+		jsonData,
+	)
+
+	if err != nil {
+		log.Error(
+			"websocket write failed opcode=%s: %v",
+			query.Opcode,
+			err,
+		)
+		return err
+	}
+
+	log.Debug(
+		"tx opcode=%s bytes=%d",
+		query.Opcode,
+		len(jsonData),
+	)
+
 	return err
 }
 
 func (c *Client) getReply() (*USB2SnesResult, error) {
-	message, err := c.messageReaderWriter.ReadMessage()
+	_, message, err := c.conn.ReadMessage()
+
 	if err != nil {
+		log.Warn(
+			"websocket read failed: %v",
+			err,
+		)
 		return nil, err
 	}
+	log.Debug(
+		"rx json bytes=%d",
+		len(message),
+	)
+
 	var result USB2SnesResult
 	err = json.Unmarshal(message, &result)
+	log.Debug(
+		"rx results=%d",
+		len(result.Results),
+	)
+	if len(result.Results) <= 10 {
+		log.Debug(
+			"rx payload=%v",
+			result.Results,
+		)
+	}
 	if err != nil {
+		log.Error(
+			"failed to unmarshal usb2snes reply: %v payload=%q",
+			err,
+			string(message),
+		)
 		return nil, err
 	}
+
+	log.Debug("usb2snes reply: %+v", result)
 	return &result, nil
-}
-
-func decodeValue(t emulator.ValueType, b []byte) (emulator.Value, error) {
-	switch t {
-	case emulator.Bool:
-		if len(b) != 1 {
-			return emulator.Value{}, errors.New("bool must be 1 byte")
-		}
-		return emulator.Value{Type: t, Bool: b[0] != 0}, nil
-
-	case emulator.U8:
-		if len(b) != 1 {
-			return emulator.Value{}, errors.New("u8 must be 1 byte")
-		}
-		return emulator.Value{Type: t, Unsigned: uint64(b[0])}, nil
-
-	case emulator.I8:
-		if len(b) != 1 {
-			return emulator.Value{}, errors.New("i8 must be 1 byte")
-		}
-		return emulator.Value{Type: t, Signed: int64(int8(b[0]))}, nil
-
-	case emulator.U16:
-		if len(b) != 2 {
-			return emulator.Value{}, errors.New("u16 must be 2 bytes")
-		}
-		return emulator.Value{Type: t, Unsigned: uint64(binary.LittleEndian.Uint16(b))}, nil
-
-	case emulator.I16:
-		if len(b) != 2 {
-			return emulator.Value{}, errors.New("i16 must be 2 bytes")
-		}
-		return emulator.Value{Type: t, Signed: int64(int16(binary.LittleEndian.Uint16(b)))}, nil
-
-	case emulator.U32:
-		if len(b) != 4 {
-			return emulator.Value{}, errors.New("u32 must be 4 bytes")
-		}
-		return emulator.Value{Type: t, Unsigned: uint64(binary.LittleEndian.Uint32(b))}, nil
-
-	case emulator.I32:
-		if len(b) != 4 {
-			return emulator.Value{}, errors.New("i32 must be 4 bytes")
-		}
-		return emulator.Value{Type: t, Signed: int64(int32(binary.LittleEndian.Uint32(b)))}, nil
-
-	case emulator.U64:
-		if len(b) != 8 {
-			return emulator.Value{}, errors.New("u64 must be 8 bytes")
-		}
-		return emulator.Value{Type: t, Unsigned: binary.LittleEndian.Uint64(b)}, nil
-
-	case emulator.I64:
-		if len(b) != 8 {
-			return emulator.Value{}, errors.New("i64 must be 8 bytes")
-		}
-		return emulator.Value{Type: t, Signed: int64(binary.LittleEndian.Uint64(b))}, nil
-
-	default:
-		return emulator.Value{}, errors.New("unknown type")
-	}
 }

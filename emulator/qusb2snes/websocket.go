@@ -1,14 +1,16 @@
 package qusb2snes
 
 import (
+	"FactFinder/logger"
 	"errors"
-	"fmt"
 	"net/url"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+var wsLog = logger.Module("emulator/qusb2snes/websocket").SetLevel(logger.InfoLevel)
 
 var ErrClosed = errors.New("client is closed")
 
@@ -55,6 +57,7 @@ func (w *WebsocketClient) WriteMessage(data []byte) error {
 	err := conn.WriteMessage(websocket.TextMessage, data)
 	if err != nil {
 		w.signalReconnect()
+		wsLog.Warn("websocket write failed, triggering reconnect: %v", err)
 		return err
 	}
 
@@ -73,6 +76,7 @@ func (w *WebsocketClient) ReadMessage() (p []byte, err error) {
 	_, message, err := conn.ReadMessage()
 	if err != nil {
 		w.signalReconnect()
+		wsLog.Warn("websocket read failed, triggering reconnect")
 	}
 	return message, err
 }
@@ -93,9 +97,9 @@ func (w *WebsocketClient) Connect() {
 
 					// retry branch (i.e. a transient network error occurred, and we might be able to reconnect
 					if conn == nil && err == nil {
-
+						wsLog.Debug("websocket reconnecting in %v", RetryWait)
 					} else if err != nil {
-						fmt.Println(err)
+						wsLog.Error("websocket connect failed: %v", err)
 					}
 
 					timer := time.NewTimer(RetryWait)
@@ -104,6 +108,7 @@ func (w *WebsocketClient) Connect() {
 						// closed during retry.  Same as Closed branch: Caller should never expect this client
 						// to be useful again
 						timer.Stop()
+						wsLog.Info("websocket client closed")
 						return
 					case <-timer.C:
 						continue
@@ -114,11 +119,13 @@ func (w *WebsocketClient) Connect() {
 				w.m.Lock()
 				w.conn = conn
 				w.connected = true
+				wsLog.Debug("websocket state -> connected")
 				w.m.Unlock()
 
 				// wait for an explicit CLose() or a read/write error that triggers a reconnect attempt
 				select {
 				case <-w.doneCh:
+					wsLog.Info("websocket Close() called")
 					w.closeConnection()
 					return
 				case <-w.reconnectCh:
@@ -139,6 +146,7 @@ func (w *WebsocketClient) Close() {
 
 // signalReconnect is a helper function to send a non-blocking message to the reconnectCh
 func (w *WebsocketClient) signalReconnect() {
+	wsLog.Debug("reconnect signal triggered")
 	select {
 	case w.reconnectCh <- struct{}{}:
 	default:
@@ -153,12 +161,18 @@ func (w *WebsocketClient) safeConnect() (*websocket.Conn, error) {
 	default:
 	}
 	conn, _, err := websocket.DefaultDialer.Dial(w.url.String(), nil)
+	if err != nil {
+		wsLog.Warn("dial failed: %v", err)
+	} else {
+		wsLog.Info("websocket connected: %s", w.url.String())
+	}
 	return conn, err
 }
 
 // closeConnection safely captures the underlying connection, clears the state of the WebsocketClient
 // then attempts to silently close the underlying websocket.Conn
 func (w *WebsocketClient) closeConnection() {
+	wsLog.Debug("closing websocket connection (state reset)")
 	w.m.Lock()
 	c := w.conn
 	w.conn = nil
@@ -167,5 +181,6 @@ func (w *WebsocketClient) closeConnection() {
 
 	if c != nil {
 		_ = c.Close()
+		wsLog.Info("websocket connection closed")
 	}
 }

@@ -1,7 +1,11 @@
 package main
 
 import (
+	// linuxmem "FactFinder/emulator/linux"
+	"FactFinder/emulator/nwa"
+	"FactFinder/emulator/qusb2snes"
 	"FactFinder/emulator/retroarch"
+	"FactFinder/logger"
 	"FactFinder/processing"
 	"FactFinder/repo"
 	"embed"
@@ -15,20 +19,33 @@ import (
 var assets embed.FS
 
 func main() {
-	providerFolder, err := repo.SetupPaths()
+	logger.Init()
+
+	paths, err := repo.SetupPaths()
 	if err != nil {
 		panic(err)
 	}
 
-	_, err = repo.ScanReadPlans()
+	_, err = repo.ScanReadPlans(paths.ProviderDir)
 	if err != nil {
 		panic(err)
 	}
 
 	raClient := retroarch.NewClient("localhost", "55355")
+	nwaClient := nwa.NewClient("localhost", "48879")
+	qUSB2SNESClient := qusb2snes.NewClient("localhost", "23074")
+	// linuxProcessClient := linuxmem.NewClient()
 	engine, osConnCh := processing.NewEngine()
 
-	app := NewApp(providerFolder, raClient, engine, osConnCh)
+	app := NewApp(
+		paths.ProviderDir,
+		raClient,
+		nwaClient,
+		qUSB2SNESClient,
+		// linuxProcessClient,
+		engine,
+		osConnCh,
+	)
 
 	// Create application with options
 	err = wails.Run(&options.App{

@@ -1,13 +1,21 @@
 import { ChangeEvent, useEffect, useState } from "react";
-import "./App.css";
-import { repo } from "../wailsjs/go/models";
-import Provider = repo.Provider;
 import {
   GetFactProviders,
   OpenFactProviderFolder,
+  SetEmulatorClient,
   SetReadPlan,
 } from "../wailsjs/go/main/App";
+import { repo } from "../wailsjs/go/models";
 import { EventsOn } from "../wailsjs/runtime";
+import "./App.css";
+import Provider = repo.Provider;
+
+enum EmulatorClient {
+  RetroArch = "retroarch",
+  NWA = "nwa",
+  QUSB2SNES = "qusb2snes",
+  // LinuxMem = "linuxmem",
+}
 
 enum ConnectionStatus {
   Disconnected = 0,
@@ -21,56 +29,73 @@ type ConnectionState = {
   message: string;
 };
 
+function useWailsEvent<T>(event: string, handler: (payload: T) => void) {
+  useEffect(() => {
+    return EventsOn(event, handler);
+  }, [event]);
+}
+
 function App() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [emulatorState, setEmulatorState] = useState<Array<Array<string>>>([]);
   const [emulatorValues, setEmulatorValues] = useState<Array<Array<string>>>(
     [],
   );
+
   const [emulatorConnection, setEmulatorConnection] = useState<ConnectionState>(
     {
       connection_status: ConnectionStatus.Disconnected,
       message: "Emulator Not Found",
     },
   );
+
   const [openSplitConnection, setOpenSplitConnection] =
     useState<ConnectionState>({
       connection_status: ConnectionStatus.Disconnected,
       message: "Opensplit Not Found",
     });
 
-  useEffect(() => {
-    return EventsOn("emulator:connection", (s: ConnectionState) => {
-      setEmulatorConnection(s);
-    });
-  }, []);
+  const [selectedClient, setSelectedClient] = useState<EmulatorClient>(
+    EmulatorClient.RetroArch,
+  );
+
+  useWailsEvent<ConnectionState>("emulator:connection", setEmulatorConnection);
+
+  useWailsEvent<ConnectionState>(
+    "opensplit:connection",
+    setOpenSplitConnection,
+  );
+
+  useWailsEvent<Array<Array<string>>>("emulator:state", setEmulatorState);
+
+  useWailsEvent<Array<Array<string>>>("emulator:values", setEmulatorValues);
 
   useEffect(() => {
-    return EventsOn("opensplit:connection", (s: ConnectionState) => {
-      setOpenSplitConnection(s);
-    });
-  }, []);
+    let mounted = true;
 
-  useEffect(() => {
-    return EventsOn("emulator:state", (s: Array<Array<string>>) => {
-      setEmulatorState(s);
-    });
-  }, []);
-
-  useEffect(() => {
-    return EventsOn("emulator:values", (s: Array<Array<string>>) => {
-      setEmulatorValues(s);
-    });
-  }, []);
-
-  useEffect(() => {
     (async () => {
-      setProviders(await GetFactProviders());
+      try {
+        const result = await GetFactProviders();
+
+        if (mounted) {
+          setProviders(result);
+        }
+      } catch (err) {
+        console.error(err);
+      }
     })();
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const changeProvider = async (e: ChangeEvent<HTMLSelectElement>) => {
-    await SetReadPlan(e.target.value);
+    try {
+      await SetReadPlan(e.target.value);
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   const getStatusColor = (state: ConnectionStatus) => {
@@ -87,13 +112,35 @@ function App() {
   };
 
   return (
-    <div style={{ padding: 20 }} id="App">
+    <div id="App">
+      <div style={{ marginTop: "10px", marginBottom: "10px" }}>
+        <select
+          value={selectedClient}
+          onChange={async (e) => {
+            const client = e.target.value as EmulatorClient;
+
+            if (client === selectedClient) {
+              return;
+            }
+
+            setSelectedClient(client);
+            await SetEmulatorClient(client);
+          }}
+        >
+          <option value={EmulatorClient.RetroArch}>RetroArch</option>
+          <option value={EmulatorClient.NWA}>NWA</option>
+          <option value={EmulatorClient.QUSB2SNES}>QUSB2SNES</option>
+          {/*<option value={EmulatorClient.LinuxMem}>Linux/Proton/Wine</option>*/}
+        </select>
+      </div>
       <div>
         <select onChange={changeProvider}>
           <option value="">Select a Fact Provider</option>
           <option value="">---</option>
           {providers.map((provider: Provider) => (
-            <option value={provider.FilePath}>{provider.Name}</option>
+            <option key={provider.FilePath} value={provider.FilePath}>
+              {provider.Name}
+            </option>
           ))}
         </select>
       </div>
@@ -101,7 +148,11 @@ function App() {
       <div style={{ marginTop: "20px" }}>
         <button
           onClick={async () => {
-            await OpenFactProviderFolder();
+            try {
+              await OpenFactProviderFolder();
+            } catch (err) {
+              console.error(err);
+            }
           }}
         >
           Open Fact Provider Folder

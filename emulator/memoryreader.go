@@ -5,6 +5,10 @@ import "errors"
 type ValueType string
 
 const (
+	F32       ValueType = "F32"
+	F64       ValueType = "F64"
+	String    ValueType = "String"
+	UTF16LE   ValueType = "UTF16LE"
 	I8        ValueType = "I8"
 	I16       ValueType = "I16"
 	I32       ValueType = "I32"
@@ -14,7 +18,7 @@ const (
 	U32       ValueType = "U32"
 	U64       ValueType = "U64"
 	Bool      ValueType = "Bool"
-	FlagCount           = "FlagCount"
+	FlagCount ValueType = "FlagCount"
 )
 
 type ConnectionStatus byte
@@ -33,13 +37,30 @@ type Value struct {
 	Name      string
 	Signed    int64
 	Unsigned  uint64
+	Float32   float32
+	Float64   float64
+	String    string
 	Bool      bool
 	FlagCount int
 }
 
-type MemoryReader interface {
+type Connector interface {
 	ConnectEmulator() ConnectionStatus
 	EmulatorConnected() ConnectionStatus
 	GameConnected() bool
-	GetValues(*ReadPlan) ([]Value, error)
+	Close() error
+}
+
+type Reader interface {
+	GetValues(*CompiledReadPlan) ([]Value, error)
+}
+
+type Planner interface {
+	CompileReadPlan(plan *ReadPlan) *CompiledReadPlan
+}
+
+type MemoryReader interface {
+	Connector
+	Reader
+	Planner
 }

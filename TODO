@@ -1,0 +1,4 @@
+Improve switching EMU interface types
+reconnect if EMU closes
+need other console testing
+add support for bitwise operators in lua
